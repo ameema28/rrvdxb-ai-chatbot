@@ -1,0 +1,102 @@
+[
+  {
+    "id": 1,
+    "name": "iPhone 14 Pro Max",
+    "price": 4699.00,
+    "currency": "AED",
+    "category": "Electronics",
+    "brand": "Apple",
+    "stock": 12,
+    "description": "256GB, Deep Purple. Flagship performance with Dynamic Island."
+  },
+  {
+    "id": 2,
+    "name": "PS5 DualSense Wireless Controller",
+    "price": 349.00,
+    "currency": "AED",
+    "category": "Electronics",
+    "brand": "Sony",
+    "stock": 45,
+    "description": "Haptic feedback and adaptive triggers for immersive gaming."
+  },
+  {
+    "id": 3,
+    "name": "Ladies Leather Handbag",
+    "price": 899.00,
+    "currency": "AED",
+    "category": "Fashion",
+    "brand": "Lacoste",
+    "stock": 8,
+    "description": "Premium leather handbag with signature crocodile logo."
+  },
+  {
+    "id": 4,
+    "name": "Chanel Coco Mademoiselle Body Spray",
+    "price": 189.00,
+    "currency": "AED",
+    "category": "Perfumes",
+    "brand": "Chanel",
+    "stock": 30,
+    "description": "Light, fresh fragrance perfect for daily wear."
+  },
+  {
+    "id": 5,
+    "name": "Sterling Silver Hoop Earrings",
+    "price": 129.00,
+    "currency": "AED",
+    "category": "Accessories",
+    "brand": "Generic",
+    "stock": 50,
+    "description": "Elegant 925 sterling silver hoops, hypoallergenic."
+  },
+  {
+    "id": 6,
+    "name": "AirPods Pro (2nd Generation)",
+    "price": 899.00,
+    "currency": "AED",
+    "category": "Electronics",
+    "brand": "Apple",
+    "stock": 20,
+    "description": "Active Noise Cancellation and Personalized Spatial Audio."
+  },
+  {
+    "id": 7,
+    "name": "Harak Perfume Oud Edition",
+    "price": 450.00,
+    "currency": "AED",
+    "category": "Perfumes",
+    "brand": "Harak",
+    "stock": 15,
+    "description": "Rich oud-based fragrance with long-lasting sillage."
+  },
+  {
+    "id": 8,
+    "name": "Adidas Ultraboost Light Running Shoes",
+    "price": 749.00,
+    "currency": "AED",
+    "category": "Fashion",
+    "brand": "Adidas",
+    "stock": 22,
+    "description": "Lightweight Boost cushioning for daily runners."
+  },
+  {
+    "id": 9,
+    "name": "Sony WH-1000XM5 Headphones",
+    "price": 1399.00,
+    "currency": "AED",
+    "category": "Electronics",
+    "brand": "Sony",
+    "stock": 10,
+    "description": "Industry-leading noise cancellation with 30-hour battery."
+  },
+  {
+    "id": 10,
+    "name": "Men's Classic Polo Shirt",
+    "price": 399.00,
+    "currency": "AED",
+    "category": "Fashion",
+    "brand": "Lacoste",
+    "stock": 35,
+    "description": "Cotton pique polo in classic fit, multiple colors available."
+  }
+]
