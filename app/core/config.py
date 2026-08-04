@@ -39,8 +39,8 @@ class Settings(BaseSettings):
         description="LLM provider: 'openai' or 'groq'",
     )
     llm_model: str = Field(
-        default="llama3-8b-8192",
-        description="Model name for the chosen provider",
+    default="llama-3.1-8b-instant",
+    description="Model name for the chosen provider",
     )
 
     # --- API Keys (at least one must be set depending on provider) ---

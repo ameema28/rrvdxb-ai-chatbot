@@ -53,4 +53,4 @@ RESPONSE FORMAT:
 """
 
 # Future utility: build_chat_messages(system_prompt, history, user_message)
-# This will be implemented when we wire up the OpenAI client.
+# This will be implemented when we wire up the Groq client.
