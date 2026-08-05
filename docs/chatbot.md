@@ -23,15 +23,24 @@
 - [x] Mocked LLM in pytest — fast, free, deterministic tests
 - [x] Updated docs to reflect Groq (not OpenAI)
 
-## What's Next (Day 3-10)
-- [ ] Implement conversation history retrieval
+### Day 3
+- [x] DB-backed conversation memory (`app/ai/chatbot/memory.py`)
+- [x] `save_turn`, `load_recent_history`, `format_history_for_prompt`
+- [x] Context windowing: load only last N=5 turns (not full history)
+- [x] History injected into LLM prompt before each call
+- [x] New turn persisted to `chat_history` after each response
+- [x] Memory test: two-turn conversation, real SQLite in-memory DB
+- [x] Assert second call's prompt contains first turn context
+- [x] No LangChain added — implemented manually with SQLAlchemy
+
+## What's Next (Day 4-10)
 - [ ] Add intent classification
 - [ ] Wire vector DB / RAG for product search
 - [ ] Add streaming response support
 - [ ] JWT authentication (replace X-User-Id stub)
 - [ ] Add rate limiting per user
 - [ ] Dockerize the application
-- [ ] Load testing for <4s latency NFR
+- [ ] Load testing for &lt;4s latency NFR
 
 ## Environment Variables Needed
 

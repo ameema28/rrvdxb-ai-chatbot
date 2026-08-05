@@ -42,14 +42,20 @@ def send_chat_message(
     system_prompt: str,
     user_message: str,
     product_context: str,
+    history: str = "",
 ) -> str:
     """
     Send a chat completion request to Groq and return the assistant's reply.
+
+    Day 3 update: Accepts an optional `history` string containing prior
+    conversation turns. The history is injected into the system prompt so
+    the model has full conversational context.
 
     Args:
         system_prompt: The guardrailed persona and scope instructions.
         user_message: The customer's raw query.
         product_context: Formatted product catalog data injected into context.
+        history: Formatted prior conversation turns (empty string if none).
 
     Returns:
         Clean string response from the LLM.
@@ -59,9 +65,12 @@ def send_chat_message(
     """
     client = _get_groq_client()
 
-    # Combine system prompt with product context so the model has factual
-    # grounding without needing RAG or vector search.
+    # Combine system prompt with product context and conversation history
+    # so the model has factual grounding + memory without needing RAG.
     full_system = f"{system_prompt}\n\nCURRENT PRODUCT CATALOG:\n{product_context}"
+
+    if history:
+        full_system += f"\n\nPRIOR CONVERSATION:\n{history}"
 
     messages = [
         {"role": "system", "content": full_system},

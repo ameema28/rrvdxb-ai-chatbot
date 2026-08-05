@@ -36,16 +36,18 @@ rrvdxb-chatbot/
 │   │           └── chatbot.py  # POST /api/v1/ai/chat
 │   ├── services/            # Business logic layer
 │   │   └── chatbot_service.py  # LLM orchestration + DB persistence
-│   ├── ai/                  # LLM prompts and clients
+│   ├── ai/                  # LLM prompts, clients, and memory
+│   │   ├── __init__.py
 │   │   └── chatbot/
 │   │       ├── __init__.py
 │   │       ├── prompts.py   # Guardrailed SYSTEM_PROMPT
-│   │       └── llm_client.py  # Groq SDK wrapper (singleton client)
+│   │       ├── llm_client.py  # Groq SDK wrapper (singleton client)
+│   │       └── memory.py    # DB-backed conversation memory
 │   └── mock_data/           # Seed data for Day 1-2
 │       ├── products.json
 │       └── faqs.json
 ├── tests/
-│   └── test_chatbot.py      # pytest suite (mocked LLM)
+│   └── test_chatbot.py      # pytest suite (mocked LLM + memory tests)
 ├── docs/
 │   └── chatbot.md           # Sprint status tracker
 ├── requirements.txt
@@ -111,10 +113,18 @@ uvicorn app.main:app --reload
 
 Navigate to: http://localhost:8000/docs
 
-### 7. Test the Endpoint
+### 7. Test the Endpoint (PowerShell)
 
-```bash
-Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} -Body '{"message":"Do you have iPhones?"}'
+**Turn 1 — Start a conversation:**
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} -Body '{"message":"I am looking for a gift"}'
+```
+
+**Turn 2 — Follow-up with context (same user):**
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} -Body '{"message":"Something under 500 AED"}'
 ```
 
 ## Running Tests
@@ -123,7 +133,7 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Head
 pytest -q
 ```
 
-Expected: `3 passed`
+Expected: `4 passed`
 
 ## Environment Variables
 
@@ -157,6 +167,15 @@ Expected: `3 passed`
 - Updated all docs to reflect Groq (not OpenAI)
 
 **New/updated files:** `llm_client.py`, `chatbot_service.py`, `test_chatbot.py`, `prompts.py`, `README.md`, `chatbot.md`
+
+### Day 3: DB-Backed Conversation Memory
+- Created `app/ai/chatbot/memory.py` — `save_turn`, `load_recent_history`, `format_history_for_prompt`
+- DB-backed conversation memory with configurable window (N=5)
+- Updated `chatbot_service.py` to load prior history before LLM call, save turn after response
+- Updated `llm_client.py` to accept `history` parameter
+- Added `test_conversation_memory_persists_across_turns` with SQLite in-memory + `StaticPool`
+- Anonymous user fallback (`user_id` → 0 when `None`)
+- No LangChain added
 
 ## Maintainer
 

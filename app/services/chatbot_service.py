@@ -2,22 +2,27 @@
 Chatbot service layer — business logic for processing messages.
 
 This layer sits between the API route and the AI client. It handles:
-  - Persisting chat history to the database
-  - Loading product catalog context
-  - Building the prompt and calling the Groq LLM
+  - Loading recent conversation history from the database
+  - Building the prompt with history + product context
+  - Calling the Groq LLM
+  - Persisting the new turn to chat_history
   - Returning a structured ChatResponse
 """
 
 import json
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.ai.chatbot.llm_client import send_chat_message
+from app.ai.chatbot.memory import (
+    format_history_for_prompt,
+    load_recent_history,
+    save_turn,
+)
 from app.ai.chatbot.prompts import SYSTEM_PROMPT
-from app.models.chat_history import ChatHistory
 from app.schemas.chatbot_schema import ChatResponse
 
 logger = logging.getLogger(__name__)
@@ -52,31 +57,44 @@ def _build_product_context(products: List[Dict[str, Any]]) -> str:
 
 
 async def handle_chat_message(
-    user_id: int,
+    user_id: Optional[int],
     message: str,
     db: Session,
 ) -> ChatResponse:
     """
-    Process a user message and return an AI chat response.
+    Process a user message and return an AI chat response with memory.
 
-    Day 2 implementation:
-    - Loads product catalog from JSON
-    - Builds a product context string
-    - Calls Groq LLM with SYSTEM_PROMPT + context + user message
-    - Persists the turn to chat_history
+    Day 3 implementation:
+    - Loads the last N conversation turns for this user from chat_history
+    - Formats history into the prompt so the AI remembers context
+    - Loads product catalog and injects it into the system prompt
+    - Calls Groq LLM with system prompt + history + user message
+    - Persists the new turn to chat_history
     - Returns the AI reply in a ChatResponse
 
     Args:
-        user_id: Authenticated user identifier.
+        user_id: Authenticated user identifier. If None, falls back to
+                 anonymous user_id 0 so the turn is still persisted.
         message: Raw user input.
         db: Active SQLAlchemy session.
 
     Returns:
         ChatResponse with AI reply. recommended_products and deal are
-        left empty until Day 3 (intent classification) and Day 5 (deals).
+        left empty until Day 5+.
     """
+    # Fallback for unauthenticated / anonymous users
+    effective_user_id = user_id if user_id is not None else 0
+
     # ------------------------------------------------------------------
-    # 1. Load product catalog and build context string
+    # 1. Load recent conversation history for this user
+    # ------------------------------------------------------------------
+    recent_turns = load_recent_history(
+        db_session=db, user_id=effective_user_id, limit=5
+    )
+    history_string = format_history_for_prompt(recent_turns)
+
+    # ------------------------------------------------------------------
+    # 2. Load product catalog and build context string
     # ------------------------------------------------------------------
     try:
         products = _load_json("products.json")
@@ -87,13 +105,14 @@ async def handle_chat_message(
     product_context = _build_product_context(products)
 
     # ------------------------------------------------------------------
-    # 2. Call the LLM via Groq SDK
+    # 3. Call the LLM via Groq SDK, passing history + product context
     # ------------------------------------------------------------------
     try:
         reply = send_chat_message(
             system_prompt=SYSTEM_PROMPT,
             user_message=message,
             product_context=product_context,
+            history=history_string,
         )
     except RuntimeError as exc:
         # The LLM client already logged the technical details.
@@ -106,23 +125,19 @@ async def handle_chat_message(
         )
 
     # ------------------------------------------------------------------
-    # 3. Persist to database
+    # 4. Persist the new turn to the database
     # ------------------------------------------------------------------
-    chat_turn = ChatHistory(
-        user_id=user_id,
+    save_turn(
+        db_session=db,
+        user_id=effective_user_id,
         message=message,
         ai_response=reply,
-        intent=None,  # Will be classified by AI pipeline on Day 3
+        intent=None,  # Will be classified by AI pipeline on Day 4+
     )
-    db.add(chat_turn)
-    db.commit()
 
     # ------------------------------------------------------------------
-    # 4. Return structured response
+    # 5. Return structured response
     # ------------------------------------------------------------------
-    # Day 2: We return the AI reply only. recommended_products and deal
-    # will be populated when we add intent classification (Day 3) and
-    # vector search (Day 6).
     return ChatResponse(
         reply=reply,
         recommended_products=[],
