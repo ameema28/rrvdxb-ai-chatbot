@@ -55,6 +55,7 @@ class ChatResponse(BaseModel):
         reply: The natural-language answer from the AI.
         recommended_products: Optional product suggestions.
         deal: Optional promotional deal or offer mentioned.
+        intent: The classified intent of the user's message (Day 4).
     """
 
     reply: str = Field(
@@ -68,4 +69,14 @@ class ChatResponse(BaseModel):
     deal: Optional[str] = Field(
         None,
         description="Any special deal or promotion mentioned in the response",
+    )
+    intent: Optional[str] = Field(
+        None,
+        description="Classified user intent (e.g. recommend_product, deal_inquiry)",
+    )
+    confidence: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Confidence of the intent classification (0.0–1.0)",
     )

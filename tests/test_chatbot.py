@@ -6,6 +6,7 @@ Ensures:
   - The response conforms to the ChatResponse schema.
   - The LLM client is mocked so tests run fast, free, and deterministically.
   - Conversation memory persists across multiple turns in the DB.
+  - The classified intent is persisted with each turn (Day 4).
 """
 
 from unittest.mock import patch
@@ -16,6 +17,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
+from app.ai.chatbot.intent import IntentResult
 from app.core.database import Base
 from app.core.dependencies import get_db
 
@@ -55,6 +57,20 @@ def override_get_db():
 app.dependency_overrides[get_db] = override_get_db
 
 
+def _mock_intent(intent: str = "general_chat", confidence: float = 1.0):
+    """
+    Context manager that mocks the intent classifier inside the service.
+
+    We ALWAYS mock classify_intent in service/endpoint tests so intent
+    recognition can't fire a real (or regex) LLM path and make the tests
+    non-deterministic.
+    """
+    return patch(
+        "app.services.chatbot_service.classify_intent",
+        return_value=IntentResult(intent=intent, confidence=confidence, entities={}),
+    )
+
+
 def _extract_history_arg(mock_call_args):
     """
     Safely extract the 'history' argument from a mocked send_chat_message call.
@@ -71,7 +87,7 @@ def test_chat_endpoint_responds_200():
     """
     Verify POST /api/v1/ai/chat returns 200 with a real AI-generated reply.
 
-    The LLM client is mocked to avoid real API calls during tests.
+    The LLM client and the intent classifier are both mocked.
     """
     payload = {
         "message": "Hello, do you have iPhones?",
@@ -86,7 +102,7 @@ def test_chat_endpoint_responds_200():
     with patch(
         "app.services.chatbot_service.send_chat_message",
         return_value=mock_reply,
-    ):
+    ), _mock_intent("recommend_product"):
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
@@ -106,6 +122,9 @@ def test_chat_endpoint_responds_200():
 
     # The reply should contain our mock content
     assert "iPhone 14 Pro Max" in data["reply"], "Mock reply content not found in response"
+
+    # Day 4: the classified intent is exposed in the response
+    assert data["intent"] == "recommend_product"
 
 
 def test_chat_endpoint_requires_user_id_header():
@@ -136,7 +155,7 @@ def test_chat_endpoint_falls_back_on_llm_error():
     with patch(
         "app.services.chatbot_service.send_chat_message",
         side_effect=RuntimeError("Simulated Groq failure"),
-    ):
+    ), _mock_intent("general_chat"):
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
@@ -146,6 +165,7 @@ def test_chat_endpoint_falls_back_on_llm_error():
     assert response.status_code == 200
     data = response.json()
     assert "human support" in data["reply"] or "trouble" in data["reply"].lower()
+    assert data["intent"] == "general_chat"
 
 
 def test_conversation_memory_persists_across_turns():
@@ -153,9 +173,10 @@ def test_conversation_memory_persists_across_turns():
     Day 3 — Verify that two sequential messages from the same user:
       1. Are both saved to chat_history (2 rows total).
       2. The second LLM call receives the first turn in its history parameter.
+      3. Each turn's intent is persisted (Day 4).
 
     We use the real in-memory SQLite DB (not mocked) to prove persistence works.
-    The Groq client is mocked to avoid real API calls.
+    The Groq client and intent classifier are mocked to avoid real API calls.
     """
     user_id = 42
 
@@ -170,7 +191,7 @@ def test_conversation_memory_persists_across_turns():
     with patch(
         "app.services.chatbot_service.send_chat_message",
         return_value=first_mock_reply,
-    ) as mock_llm:
+    ) as mock_llm, _mock_intent("recommend_product"):
         response1 = client.post(
             "/api/v1/ai/chat",
             json={"message": "I am looking for a gift", "user_id": user_id},
@@ -179,6 +200,7 @@ def test_conversation_memory_persists_across_turns():
         assert response1.status_code == 200
         data1 = response1.json()
         assert data1["reply"] == first_mock_reply
+        assert data1["intent"] == "recommend_product"
 
         # Capture the call arguments for Turn 1
         history_arg_1 = _extract_history_arg(mock_llm.call_args)
@@ -195,7 +217,7 @@ def test_conversation_memory_persists_across_turns():
     with patch(
         "app.services.chatbot_service.send_chat_message",
         return_value=second_mock_reply,
-    ) as mock_llm:
+    ) as mock_llm, _mock_intent("recommend_product"):
         response2 = client.post(
             "/api/v1/ai/chat",
             json={"message": "Something under 500 AED", "user_id": user_id},
@@ -217,7 +239,7 @@ def test_conversation_memory_persists_across_turns():
         )
 
     # ------------------------------------------------------------------
-    # Verify DB persistence: exactly 2 rows for this user
+    # Verify DB persistence: exactly 2 rows for this user, with intents
     # ------------------------------------------------------------------
     db = TestingSessionLocal()
     rows = db.query(ChatHistory).filter(ChatHistory.user_id == user_id).all()
@@ -226,5 +248,34 @@ def test_conversation_memory_persists_across_turns():
     assert len(rows) == 2, f"Expected 2 chat_history rows, got {len(rows)}"
     assert rows[0].message == "I am looking for a gift"
     assert rows[0].ai_response == first_mock_reply
+    assert rows[0].intent == "recommend_product"
     assert rows[1].message == "Something under 500 AED"
     assert rows[1].ai_response == second_mock_reply
+    assert rows[1].intent == "recommend_product"
+
+
+def test_intent_is_saved_to_chat_history():
+    """
+    Day 4 — Verify the classified intent is persisted with each turn
+    and surfaced in the API response.
+    """
+    user_id = 99
+
+    with patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value="Here are today's top offers!",
+    ), _mock_intent("deal_inquiry"):
+        response = client.post(
+            "/api/v1/ai/chat",
+            json={"message": "Show me today's deals", "user_id": user_id},
+            headers={"X-User-Id": str(user_id)},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "deal_inquiry"
+
+    db = TestingSessionLocal()
+    row = db.query(ChatHistory).filter(ChatHistory.user_id == user_id).one()
+    db.close()
+
+    assert row.intent == "deal_inquiry"

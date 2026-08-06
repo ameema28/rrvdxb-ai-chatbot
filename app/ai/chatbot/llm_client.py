@@ -67,7 +67,9 @@ def send_chat_message(
 
     # Combine system prompt with product context and conversation history
     # so the model has factual grounding + memory without needing RAG.
-    full_system = f"{system_prompt}\n\nCURRENT PRODUCT CATALOG:\n{product_context}"
+    full_system = system_prompt
+    if product_context:
+        full_system += f"\n\nCURRENT PRODUCT CATALOG:\n{product_context}"
 
     if history:
         full_system += f"\n\nPRIOR CONVERSATION:\n{history}"
