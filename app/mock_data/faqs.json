@@ -6,37 +6,52 @@
   },
   {
     "id": 2,
+    "question": "Do you ship to Saudi Arabia (KSA)?",
+    "answer": "Yes, we ship to Saudi Arabia including Riyadh, Jeddah, and Dammam. Delivery typically takes 3-5 business days. Cash on Delivery is available for KSA orders."
+  },
+  {
+    "id": 3,
     "question": "Do you ship to Pakistan?",
     "answer": "Yes, we ship to major cities in Pakistan including Karachi, Lahore, and Islamabad. Delivery typically takes 5-7 business days."
   },
   {
-    "id": 3,
+    "id": 4,
     "question": "Do you ship to the UK?",
     "answer": "Yes, we ship to the United Kingdom. Standard delivery takes 7-10 business days. Express options are available at checkout."
   },
   {
-    "id": 4,
+    "id": 5,
     "question": "What is your return policy?",
     "answer": "We accept returns within 14 days of delivery. Items must be unused, in original packaging, with tags attached. Electronics must be unopened unless defective."
   },
   {
-    "id": 5,
+    "id": 6,
     "question": "What payment methods do you accept?",
-    "answer": "We accept Visa, Mastercard, Apple Pay, Google Pay, Tabby (Buy Now Pay Later), and Cash on Delivery (UAE only)."
+    "answer": "We accept Visa, Mastercard, Apple Pay, Google Pay, Tabby (Buy Now Pay Later), and Cash on Delivery (UAE and KSA only)."
   },
   {
-    "id": 6,
+    "id": 7,
     "question": "What is the free shipping threshold?",
     "answer": "Free standard shipping is available on all orders over AED 489. Orders below this amount incur a flat shipping fee of AED 25."
   },
   {
-    "id": 7,
+    "id": 8,
     "question": "Do your products come with a warranty?",
     "answer": "Electronics come with a manufacturer warranty (typically 1 year). Fashion and accessories are covered against manufacturing defects for 30 days. Perfumes are non-returnable once opened due to hygiene reasons."
   },
   {
-    "id": 8,
+    "id": 9,
     "question": "How can I track my order?",
     "answer": "Once your order ships, you will receive an email and SMS with a tracking link. You can also log into your account and view order status under 'My Orders'."
+  },
+  {
+    "id": 10,
+    "question": "Are your products authentic?",
+    "answer": "Yes. Every item on RRVDXB is sourced directly from official brand distributors or authorized retailers. We guarantee 100% product authenticity and include authenticity paperwork with luxury items."
+  },
+  {
+    "id": 11,
+    "question": "Do you have any discounts or promo codes?",
+    "answer": "Yes, we run seasonal promotions and flash sales throughout the year. New customers get 10% off their first order. Active promo codes are always listed on our website and sent to subscribed members."
   }
 ]

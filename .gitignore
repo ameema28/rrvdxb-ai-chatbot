@@ -45,3 +45,6 @@ rrvdxb.db
 # OS
 .DS_Store
 Thumbs.db
+
+# Chroma vector database (local RAG index, rebuilt from faqs.json)
+app/ai/chatbot/rag/chroma_db/

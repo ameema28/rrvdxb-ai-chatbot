@@ -11,6 +11,8 @@ order support, and personalized recommendations.
 | Framework | FastAPI (async Python) |
 | ORM | SQLAlchemy 2.0 |
 | Database | SQLite (local dev) → PostgreSQL (production) |
+| Vector DB | ChromaDB (local, persistent) |
+| Embeddings | sentence-transformers (`all-MiniLM-L6-v2`, local, offline) |
 | LLM | Groq (Chat Completions API) |
 | Validation | Pydantic v2 |
 | Testing | pytest |
@@ -36,23 +38,29 @@ rrvdxb-chatbot/
 │   │           └── chatbot.py  # POST /api/v1/ai/chat
 │   ├── services/            # Business logic layer
 │   │   └── chatbot_service.py  # LLM orchestration + intent routing + DB persistence
-│   ├── ai/                  # LLM prompts, clients, memory, and intent
+│   ├── ai/                  # LLM prompts, clients, memory, intent, and RAG
 │   │   ├── __init__.py
 │   │   └── chatbot/
 │   │       ├── __init__.py
 │   │       ├── prompts.py   # Guardrailed SYSTEM_PROMPT + INTENT_CLASSIFICATION_PROMPT
 │   │       ├── llm_client.py  # Groq SDK wrapper (singleton client)
 │   │       ├── memory.py    # DB-backed conversation memory
-│   │       └── intent.py    # Day 4: regex + LLM intent classifier (IntentResult)
+│   │       ├── intent.py    # Day 4: regex + LLM intent classifier (IntentResult)
+│   │       └── rag/         # Day 5: RAG fundamentals + local vector store
+│   │           ├── __init__.py
+│   │           └── vector_store.py  # FAQ chunk + embed + ChromaDB retrieve/query
 │   └── mock_data/           # Seed data for Day 1-2
 │       ├── products.json
 │       └── faqs.json
+├── scripts/                 # Standalone operational scripts (no __init__.py needed)
+│   └── build_vector_store.py  # Day 5: build/persist the FAQ Chroma index (run once)
 ├── tests/
 │   ├── test_chatbot.py      # pytest suite (mocked LLM + memory + intent persistence)
-│   └── test_intent.py       # Day 4: intent recognition tests (regex + LLM fallback)
+│   ├── test_intent.py       # Day 4: intent recognition tests (regex + LLM fallback)
 ├── docs/
 │   └── chatbot.md           # Sprint status tracker
 ├── requirements.txt
+├── pytest.ini               # Silences the httpx/app deprecation warning in tests
 ├── .env.example             # Environment variable template
 ├── .gitignore
 └── README.md
@@ -87,6 +95,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+> **Note (Day 5):** This installs `torch` (a large binary) via
+> `sentence-transformers`. On Windows, if pip fails with `WinError 206
+> (filename or extension too long)`, enable the **Long Paths** registry
+> setting (`HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1`)
+> or relocate the project to a shorter path.
+
 ### 4. Configure Environment
 
 ```bash
@@ -105,17 +119,37 @@ LLM_PROVIDER=groq
 LLM_MODEL=llama-3.1-8b-instant
 ```
 
-### 5. Run the Server
+### 5. Build the FAQ Vector Store (Day 5)
+
+The FAQ chunks are embedded with a **local** model (`all-MiniLM-L6-v2`,
+~90MB, auto-downloaded and cached on first run — no API key needed). Build
+the index once:
+
+```bash
+python scripts/build_vector_store.py
+
+# Optional: build + run a demo semantic search
+python scripts/build_vector_store.py --query "do you ship to Pakistan?"
+```
+
+This persists the Chroma collection to
+`app/ai/chatbot/rag/chroma_db/` (git-ignored). Re-running it is safe —
+it is idempotent (updates changed entries, adds new ones, removes stale ones).
+
+> RAG is **not yet wired into the chat response** (that's Day 6). Today it
+> is standalone retrieval infrastructure.
+
+### 6. Run the Server
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-### 6. Open API Docs
+### 7. Open API Docs
 
 Navigate to: http://localhost:8000/docs
 
-### 7. Test the Endpoint (PowerShell)
+### 8. Test the Endpoint (PowerShell)
 
 **Turn 1 — Start a conversation:**
 
@@ -129,7 +163,7 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Head
 Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} -Body '{"message":"Something under 500 AED"}'
 ```
 
-### 8. Test Intent Routing (Day 4)
+### 9. Test Intent Routing (Day 4)
 
 Each response includes an `"intent"` (and `"confidence"`) field showing which path handled the request.
 
@@ -153,7 +187,8 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Head
 pytest -q
 ```
 
-Expected: `20 passed`
+Expected: `20 passed` (as of Day 5; RAG isn't wired to the chat path yet,
+so existing tests are unaffected).
 
 ## Environment Variables
 
@@ -166,7 +201,10 @@ Expected: `20 passed`
 | INTERNAL_JWT_SECRET | Yes | — | Min 32 chars for JWT signing |
 | DEBUG | No | True | FastAPI debug mode |
 
-> No new environment variables were added in Day 4.
+> No new environment variables were added in Day 5. RAG state is fixed
+> constants in code: the ChromaDB collection lives at
+> `app/ai/chatbot/rag/chroma_db/`, the embedding model name is
+> `all-MiniLM-L6-v2`, and telemetry is disabled (`anonymized_telemetry=False`).
 
 ## Progress
 
@@ -220,21 +258,39 @@ Expected: `20 passed`
 - Updated `chatbot_schema.py` — `ChatResponse` now exposes `intent` and `confidence`
 - Created `tests/test_intent.py` (regex fast-path without LLM, LLM fallback, malformed JSON, unknown intent, Groq API failure, confidence override)
 - Updated `tests/test_chatbot.py` — mocked classifier in chat-flow tests, intent persisted to DB asserted
-- Manually verified all 5 intents route correctly via the API (regex fast-path → `confidence=1.0`; LLM path → `confidence=0.92`)
+- Manually verified all 5 intents route correctly via the API
 - Post-review hardening (applied):
   - All regex patterns use `\b` word boundaries (so `suggestion` no longer matches `suggest`)
   - `gift` only matches in shopping phrases (`gift for`, `gift idea(s)`) — a "return policy for a gift" query correctly routes to `product_faq`
-  - `\bbuy\b` added so bare buying questions route to `recommend_product`
+  - `\bbuy\b` added so bare buying questions route to `recommend`
   - Confidence output is clamped to `[0.0, 1.0]` (LLM returning `9.5` becomes `1.0`)
   - `INTENT_CLASSIFICATION_PROMPT` now instructs: "If the message fits none of these intents, choose `general_chat` with confidence ≤ 0.5"
   - `CURRENT PRODUCT CATALOG:` header is only injected when `product_context` is non-empty
-  - Regression tests added (`test_gift_return_query_routes_to_product_faq_not_recommend`, `test_bare_buy_matches_recommend`, `test_confidence_is_clamped_to_1_0`, extended `test_regex_fast_path_never_calls_llm`)
+  - Regression tests added (`gift-return→product_faq`, `bare-buy→recommend_product`, `confidence-clamp`)
 - No new packages added (stdlib `re`/`json` only) — **no LangChain**
 
 **New files:** `app/ai/chatbot/intent.py`, `tests/test_intent.py`
 **Updated files:** `prompts.py`, `chatbot_service.py`, `chatbot_schema.py`, `test_chatbot.py`, `README.md`, `chatbot.md`
 
+### Day 5: RAG Fundamentals + Vector Store
+- Created `app/ai/chatbot/rag/vector_store.py` — the RAG retrieval layer:
+  - `load_faqs()` — safely reads `app/mock_data/faqs.json` (graceful on missing file / malformed JSON; skips invalid entries)
+  - `build_vector_store()` — chunks each FAQ (**one Q&A pair per chunk**), embeds with local `sentence-transformers` (`all-MiniLM-L6-v2`, 384-dim), persists to ChromaDB; **idempotent** (upsert + stale-delete)
+  - `get_vector_store()` — lazy loader; builds only if the persisted `chroma.sqlite3` is not already on disk
+  - `search_faqs(query, top_k)` — semantic similarity query (cosine) returning ranking + `similarity`
+- Embedded **entirely locally** — **no OpenAI key** used anywhere
+- Persists to `app/ai/chatbot/rag/chroma_db/` (added to `.gitignore`)
+- Expanded `faqs.json` to **11 coverage entries** (Shipping: UAE/KSA/Pak/UK, Returns, Payments, Free-shipping AED 489, Warranty, Tracking, Authenticity, Discounts)
+- Created `scripts/build_vector_store.py` — standalone build (`python scripts/build_vector_store.py`), optional `--query` demo; no FastAPI needed
+- First-run gracefully handles model download (with offline-cache fast path + `local_files_only` to avoid slow/blocked HuggingFace timeouts)
+- Telemetry disabled (`Settings(anonymized_telemetry=False)`) + pinned `posthog==3.5.0` to remove Chroma's noisy telemetry `ERROR` logs
+- Updated `requirements.txt` (`chromadb==0.5.5`, `sentence-transformers==3.0.1`; bumped `httpx` to `0.27.2` to fix a dependency conflict) and added `.gitignore` entry
+- **Not yet wired into the chat** — the Day-6 `product_faq` path will call `search_faqs()` and inject grounded hits into the prompt
+
+**New files:** `app/ai/chatbot/rag/__init__.py`, `app/ai/chatbot/rag/vector_store.py`, `scripts/build_vector_store.py`, `pytest.ini`
+**Updated files:** `mock_data/faqs.json`, `requirements.txt`, `.gitignore`, `README.md`, `chatbot.md`
+
 ## Maintainer
 
-Ameema Rashid — AI Lead, RRVDXB Chatbot Sprint  
+Ameema Rashid — AI Lead, RRVDXB Chatbot
 TechNexus Virtual University

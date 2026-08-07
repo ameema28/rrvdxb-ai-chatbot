@@ -15,9 +15,16 @@ openai==1.10.0
 
 # Testing
 pytest==8.0.0
-httpx==0.26.0
+httpx==0.27.2
 
 # Utilities
 python-dotenv==1.0.0
 
 colorama>=0.4.6
+
+# Day 5 — RAG / Vector store (local embeddings, no OpenAI key)
+chromadb==0.5.5
+sentence-transformers==3.0.1
+
+# chromadb 0.5.5 depends on the old posthog API for its (disabled) telemetry
+posthog==3.5.0

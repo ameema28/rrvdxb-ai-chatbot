@@ -1,0 +1,1 @@
+"""RAG (retrieval-augmented generation) sub-package: local FAQ vector store."""
