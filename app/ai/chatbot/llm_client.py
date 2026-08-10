@@ -3,6 +3,9 @@ Groq LLM client wrapper for the RRVDXB AI Shopping Chatbot.
 
 Provides a single entry point for sending chat completion requests to Groq.
 Handles client initialization, error handling, and response extraction.
+
+Day 6: stays a THIN Groq wrapper. Prompt engineering (including the RAG
+prompt) lives in prompts.py — this module has no RAG-specific logic.
 """
 
 import logging
@@ -43,6 +46,7 @@ def send_chat_message(
     user_message: str,
     product_context: str,
     history: str = "",
+    system_prompt_override: Optional[str] = None,
 ) -> str:
     """
     Send a chat completion request to Groq and return the assistant's reply.
@@ -51,11 +55,19 @@ def send_chat_message(
     conversation turns. The history is injected into the system prompt so
     the model has full conversational context.
 
+    Day 6 update: Accepts an optional `system_prompt_override`. When set, it
+    REPLACES `system_prompt` entirely and SKIPS the product-catalog injection
+    (the override is a complete, final prompt built in prompts.py, e.g. the
+    RAG-grounded prompt). History is still appended so the RAG flow keeps
+    conversation memory. The client stays a THIN Groq wrapper — no RAG logic.
+
     Args:
         system_prompt: The guardrailed persona and scope instructions.
         user_message: The customer's raw query.
         product_context: Formatted product catalog data injected into context.
         history: Formatted prior conversation turns (empty string if none).
+        system_prompt_override: Optional final prompt that fully replaces
+            `system_prompt` (e.g. build_rag_system_prompt() output).
 
     Returns:
         Clean string response from the LLM.
@@ -65,12 +77,17 @@ def send_chat_message(
     """
     client = _get_groq_client()
 
-    # Combine system prompt with product context and conversation history
-    # so the model has factual grounding + memory without needing RAG.
-    full_system = system_prompt
-    if product_context:
-        full_system += f"\n\nCURRENT PRODUCT CATALOG:\n{product_context}"
+    # An override is taken verbatim — it is already the complete final prompt.
+    # Otherwise compose base prompt + catalog + history exactly as before,
+    # so every existing caller (intent.py, general chat) is unaffected.
+    if system_prompt_override is not None:
+        full_system = system_prompt_override
+    else:
+        full_system = system_prompt
+        if product_context:
+            full_system += f"\n\nCURRENT PRODUCT CATALOG:\n{product_context}"
 
+    # History is appended for ALL paths — memory survives the RAG flow too.
     if history:
         full_system += f"\n\nPRIOR CONVERSATION:\n{history}"
 

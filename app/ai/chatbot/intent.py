@@ -99,7 +99,11 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
         "product_faq",
         re.compile(
             r"\breturn\b.*\bpolicy\b|\bwarranty\b|how.*\breturn\b|"
-            r"\bfaq\b|question.*about",
+            r"\bfaq\b|question.*about|"
+            r"\b(?:ship|shipping)\s+to\b|"
+            r"\bshipping\s+(?:times?|options?|costs?|rates?|policy)\b|"
+            r"\bdeliver(?:y|ies)?\s+(?:times?|options?|regions?|to)\b|"
+            r"\bin\s+stock\b|\bstock\s+(?:availability|status|levels?|check)\b",
             re.IGNORECASE,
         ),
     ),

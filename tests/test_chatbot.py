@@ -7,6 +7,7 @@ Ensures:
   - The LLM client is mocked so tests run fast, free, and deterministically.
   - Conversation memory persists across multiple turns in the DB.
   - The classified intent is persisted with each turn (Day 4).
+  - product_faq intents are grounded in retrieved FAQ context (Day 6 RAG).
 """
 
 from unittest.mock import patch
@@ -279,3 +280,124 @@ def test_intent_is_saved_to_chat_history():
     db.close()
 
     assert row.intent == "deal_inquiry"
+
+
+# --------------------------------------------------------------------------
+# Day 6 — RAG pipeline: product_faq intents are grounded in FAQ context
+# --------------------------------------------------------------------------
+
+_FAKE_FAQ_CHUNKS = [
+    {
+        "question": "What is your return policy?",
+        "answer": "You can return any unworn item within 30 days for a full refund.",
+        "similarity": 0.92,
+    },
+    {
+        "question": "Do you offer free shipping?",
+        "answer": "Yes, shipping is free on orders over 489 AED.",
+        "similarity": 0.85,
+    },
+]
+
+
+def test_product_faq_uses_retrieved_faq_context():
+    """
+    Day 6 — For a product_faq intent the service:
+      a. calls retrieve_faq_context with the user's exact question,
+      b. passes the retrieved FAQ context into the system prompt sent to
+         Groq (as system_prompt_override, still under the Day-1 guardrails),
+      c. surfaces the retrieved content in the reply, and
+         still threads conversation history through the call.
+    """
+    payload = {"message": "what is your return policy?", "user_id": 7}
+    mock_reply = "You can return any unworn item within 30 days for a full refund."
+
+    with patch(
+        "app.services.chatbot_service.retrieve_faq_context",
+        return_value=_FAKE_FAQ_CHUNKS,
+    ) as mock_retriever, patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=mock_reply,
+    ) as mock_llm, _mock_intent("product_faq"):
+        response = client.post(
+            "/api/v1/ai/chat",
+            json=payload,
+            headers={"X-User-Id": "7"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["reply"] == mock_reply
+    assert data["intent"] == "product_faq"
+
+    # a. The retriever was queried with the user's exact question.
+    mock_retriever.assert_called_once_with("what is your return policy?")
+
+    # Pull the exact call signature the service used.
+    kwargs = mock_llm.call_args.kwargs
+    assert kwargs["user_message"] == "what is your return policy?"
+    assert "history" in kwargs, "RAG flow must still pass conversation history"
+
+    # b. FAQ context lives inside the grounded system prompt (the override),
+    #    formatted Q:/A: per chunk, still wrapped in the Day-1 guardrails.
+    rag_prompt = kwargs.get("system_prompt_override") or ""
+    assert "FAQ CONTEXT:" in rag_prompt
+    assert "Q: What is your return policy?" in rag_prompt
+    assert "A: You can return any unworn item within 30 days" in rag_prompt
+    assert "A: Yes, shipping is free on orders over 489 AED." in rag_prompt
+    assert "STRICT GUARDRAILS" in rag_prompt, "Day-1 guardrails must survive RAG"
+
+    # The raw product catalog is NOT stacked on top of FAQ context.
+    assert kwargs.get("product_context") == ""
+
+    # c. The reply reflects the retrieved content.
+    assert "30 days" in data["reply"]
+
+
+def test_product_faq_no_rag_match_falls_back_gracefully():
+    """
+    Day 6 — When the retriever returns nothing (or nothing above threshold),
+    the service degrades gracefully: no FAQ context is injected, the general
+    SYSTEM_PROMPT (with a polite no-match note) is used, and the model is
+    told never to invent a policy.
+    """
+    payload = {"message": "what is your return policy?", "user_id": 8}
+    mock_reply = (
+        "I don't have that specific policy on file right now — let me "
+        "connect you with our support team for an accurate answer."
+    )
+
+    with patch(
+        "app.services.chatbot_service.retrieve_faq_context",
+        return_value=[],
+    ) as mock_retriever, patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=mock_reply,
+    ) as mock_llm, _mock_intent("product_faq"):
+        response = client.post(
+            "/api/v1/ai/chat",
+            json=payload,
+            headers={"X-User-Id": "8"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["reply"] == mock_reply
+    assert data["intent"] == "product_faq"
+
+    mock_retriever.assert_called_once_with("what is your return policy?")
+
+    kwargs = mock_llm.call_args.kwargs
+    # No grounded context was produced or injected.
+    assert kwargs.get("system_prompt_override") is None
+    assert "FAQ CONTEXT:" not in kwargs.get("system_prompt", "")
+
+    # The general flow was used, extended with the polite no-match guidance,
+    # and the model is explicitly forbidden from inventing a policy.
+    assert "no matching FAQ" in kwargs.get("system_prompt", "")
+    assert "Do NOT invent" in kwargs.get("system_prompt", "")
+    
+    # Graceful fallback to the general flow: the product catalog is
+    # re-injected as context (non-empty), so the answer can stay grounded
+    # in real catalog data without inventing anything.
+    assert kwargs["product_context"] != ""

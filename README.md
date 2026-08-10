@@ -46,17 +46,19 @@ rrvdxb-chatbot/
 │   │       ├── llm_client.py  # Groq SDK wrapper (singleton client)
 │   │       ├── memory.py    # DB-backed conversation memory
 │   │       ├── intent.py    # Day 4: regex + LLM intent classifier (IntentResult)
-│   │       └── rag/         # Day 5: RAG fundamentals + local vector store
+│   │       └── rag/         # Day 5-6: RAG fundamentals, vector store, retriever
 │   │           ├── __init__.py
-│   │           └── vector_store.py  # FAQ chunk + embed + ChromaDB retrieve/query
+│   │           ├── vector_store.py  # FAQ chunk + embed + ChromaDB retrieve/query
+│   │           └── retriever.py     # Day 6: FAQ retrieval wrapper (threshold gate + graceful empty)
 │   └── mock_data/           # Seed data for Day 1-2
 │       ├── products.json
 │       └── faqs.json
 ├── scripts/                 # Standalone operational scripts (no __init__.py needed)
 │   └── build_vector_store.py  # Day 5: build/persist the FAQ Chroma index (run once)
 ├── tests/
-│   ├── test_chatbot.py      # pytest suite (mocked LLM + memory + intent persistence)
+│   ├── test_chatbot.py      # pytest suite (mocked LLM + memory + intent persistence + RAG)
 │   ├── test_intent.py       # Day 4: intent recognition tests (regex + LLM fallback)
+│   └── test_retriever.py    # Day 6: retriever unit tests (mocked search_faqs)
 ├── docs/
 │   └── chatbot.md           # Sprint status tracker
 ├── requirements.txt
@@ -136,8 +138,9 @@ This persists the Chroma collection to
 `app/ai/chatbot/rag/chroma_db/` (git-ignored). Re-running it is safe —
 it is idempotent (updates changed entries, adds new ones, removes stale ones).
 
-> RAG is **not yet wired into the chat response** (that's Day 6). Today it
-> is standalone retrieval infrastructure.
+> **Day 6:** `product_faq` questions (policies, shipping, stock, warranty) are
+> now answered using context retrieved from this FAQ index — RAG is wired into
+> the chat response.
 
 ### 6. Run the Server
 
@@ -187,8 +190,8 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Head
 pytest -q
 ```
 
-Expected: `20 passed` (as of Day 5; RAG isn't wired to the chat path yet,
-so existing tests are unaffected).
+Expected: `32 passed` (Day 6: RAG is wired into the chat; new tests cover the
+retriever, intent routing for shipping/stock questions, and the grounded FAQ path).
 
 ## Environment Variables
 
@@ -201,10 +204,12 @@ so existing tests are unaffected).
 | INTERNAL_JWT_SECRET | Yes | — | Min 32 chars for JWT signing |
 | DEBUG | No | True | FastAPI debug mode |
 
-> No new environment variables were added in Day 5. RAG state is fixed
+> No new environment variables were added through Day 6. RAG state is fixed
 > constants in code: the ChromaDB collection lives at
 > `app/ai/chatbot/rag/chroma_db/`, the embedding model name is
-> `all-MiniLM-L6-v2`, and telemetry is disabled (`anonymized_telemetry=False`).
+> `all-MiniLM-L6-v2`, the relevance threshold is a code constant
+> (`DEFAULT_SIMILARITY_THRESHOLD = 0.6` in `retriever.py`), and telemetry is
+> disabled (`anonymized_telemetry=False`).
 
 ## Progress
 
@@ -289,6 +294,43 @@ so existing tests are unaffected).
 
 **New files:** `app/ai/chatbot/rag/__init__.py`, `app/ai/chatbot/rag/vector_store.py`, `scripts/build_vector_store.py`, `pytest.ini`
 **Updated files:** `mock_data/faqs.json`, `requirements.txt`, `.gitignore`, `README.md`, `chatbot.md`
+
+### Day 6: RAG Pipeline Integration
+- Created `app/ai/chatbot/rag/retriever.py` — the retrieval + relevance-gate layer:
+  - `retrieve_faq_context(query, k=3, similarity_threshold=0.6)` reuses the EXISTING
+    `search_faqs()`/`get_vector_store()` (never rebuilds the index) and returns only
+    chunks whose cosine similarity clears the threshold
+  - Output contract: `[{"question", "answer", "similarity"}]`, most-similar first
+  - Clamps `k` to 1–10 and threshold to 0–1; returns `[]` gracefully on a blank query,
+    a missing/empty store, or any search failure (log + degrade)
+- Added `build_rag_system_prompt(retrieved_chunks)` in `prompts.py`:
+  - Day-1 `SYSTEM_PROMPT` (persona + STRICT GUARDRAILS) preserved verbatim, so
+    guardrails still outrank injected data
+  - Appends a flagged `FAQ CONTEXT:` block (Q:/A: per chunk) + RAG instructions:
+    cite only, admit gaps politely, never invent policies/prices/availability
+- Extended `send_chat_message()` in `llm_client.py` with optional `system_prompt_override`:
+  - when set, it fully replaces the base prompt and SKIPS catalog injection (self-contained
+    final prompt); history is still appended so memory survives the RAG flow — the client
+    stays a thin Groq wrapper
+- Wired the `product_faq` path in `chatbot_service.py`:
+  - `retrieve_faq_context(message)` → chunks found: use `build_rag_system_prompt` as the
+    override with `product_context=""` (catalog is not stacked on FAQ context)
+  - no chunks: graceful fallback to the general flow — `SYSTEM_PROMPT + _NO_FAQ_MATCH_NOTE`,
+    with the catalog re-injected (polite no-match, never invent)
+  - conversation history still passed through the RAG call; response shape unchanged (`ChatResponse`)
+- Extended the `product_faq` regex in `intent.py` to route shipping-destination /
+  delivery-options / stock-availability questions to the RAG-grounded intent;
+  "shipping status of my order" still wins `track_order_help` (regex precedence preserved)
+- Tests: `tests/test_retriever.py` (6 unit tests, `search_faqs` mocked), 2 new RAG chat-flow
+  tests, strengthened no-match fallback assertion, 4 intent routing regressions → `pytest -q` → **32 passed**
+- Tuning: `DEFAULT_SIMILARITY_THRESHOLD = 0.6` — measured: the exact "return policy" FAQ match
+  scores ~0.66, so the spec-default 0.7 would wrongly drop it; 0.6 keeps strong hits (shipping
+  ~0.79, returns ~0.66) while excluding junk (0.23–0.45)
+- No new packages added — **no LangChain** (`requirements.txt` unchanged); no new
+  directories → no new `__init__.py`
+
+**New files:** `app/ai/chatbot/rag/retriever.py`, `tests/test_retriever.py`
+**Updated files:** `prompts.py`, `llm_client.py`, `chatbot_service.py`, `intent.py`, `tests/test_chatbot.py`, `tests/test_intent.py`, `README.md`, `chatbot.md`
 
 ## Maintainer
 

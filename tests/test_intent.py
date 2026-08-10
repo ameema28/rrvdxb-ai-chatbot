@@ -171,3 +171,35 @@ def test_groq_api_failure_falls_back_to_general_chat():
         result = classify_intent(_AMBIGUOUS)
     assert result.intent == "general_chat"
     assert result.confidence == 0.0
+
+def test_shipping_destination_question_routes_to_product_faq():
+    """Shipping-policy questions must hit the RAG-grounded product_faq path."""
+    result = classify_intent("Do you ship to Pakistan?")
+    assert result.intent == "product_faq"
+    assert result.confidence == 1.0
+
+
+def test_stock_availability_question_routes_to_product_faq():
+    """
+    Stock availability is product detail, not order tracking — it routes to
+    product_faq so RAG (or the catalog fallback) can ground the answer.
+    """
+    result = classify_intent("Is the iPhone 14 Pro Max in stock?")
+    assert result.intent == "product_faq"
+    assert result.confidence == 1.0
+
+
+def test_delivery_options_question_routes_to_product_faq():
+    result = classify_intent("What are your delivery options?")
+    assert result.intent == "product_faq"
+    assert result.confidence == 1.0
+
+
+def test_shipping_status_still_routes_to_track_order_help():
+    """
+    Regression: an active-order status question must STILL win track_order_help
+    (the track pattern is listed before product_faq and keeps precedence).
+    """
+    result = classify_intent("What is the shipping status of my order?")
+    assert result.intent == "track_order_help"
+    assert result.confidence == 1.0

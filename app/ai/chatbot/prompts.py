@@ -4,7 +4,15 @@ System prompt and prompt-building utilities for the RRVDXB AI Shopping Chatbot.
 The SYSTEM_PROMPT is the single most important file for controlling AI behavior.
 It defines persona, boundaries, and guardrails that prevent hallucinations
 and off-topic responses.
+
+Day 6: build_rag_system_prompt() lives HERE (the content the model sees) so
+prompt engineering stays separated from llm_client.py (the transport layer).
 """
+
+import logging
+from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------
 # SYSTEM PROMPT — RRVDXB AI Shopping Assistant
@@ -53,7 +61,8 @@ RESPONSE FORMAT:
 """
 
 # Future utility: build_chat_messages(system_prompt, history, user_message)
-# This will be implemented when we wire up the Groq client.
+# Day 6 began this work: build_rag_system_prompt() below assembles the full
+# final system prompt for the RAG path.
 
 # --------------------------------------------------------------------------
 # INTENT CLASSIFICATION PROMPT — Day 4
@@ -94,3 +103,51 @@ Example output:
 
 Now classify this customer message:
 """
+
+
+# --------------------------------------------------------------------------
+# RAG SYSTEM PROMPT BUILDER — Day 6
+# --------------------------------------------------------------------------
+# Why this builds ON TOP of SYSTEM_PROMPT:
+#   - The Day-1 persona and STRICT GUARDRAILS are preserved verbatim, so
+#     Sara's voice AND her boundaries survive grounding.
+#   - The FAQ context is appended as a clearly-flagged block with Q: / A:
+#     prefixes so the model can tell "facts to cite" from "instructions".
+#   - A closing RAG instruction keeps the guardrail tight: context is her
+#     source of truth, but absent facts must be admitted, never invented.
+# --------------------------------------------------------------------------
+
+def build_rag_system_prompt(retrieved_chunks: List[Dict[str, Any]]) -> str:
+    """
+    Build the system prompt for a product_faq answer grounded in RAG context.
+
+    Args:
+        retrieved_chunks: Output of retrieve_faq_context() — a list of dicts
+            with question / answer / similarity keys.
+
+    Returns:
+        A single complete system prompt string, ready for the LLM call.
+    """
+    if not retrieved_chunks:
+        # Contract safety: never called with an empty list by the service,
+        # but returning the base prompt is the right degenerate behaviour.
+        logger.warning("build_rag_system_prompt called with no chunks")
+        return SYSTEM_PROMPT
+
+    # Render each chunk as a Q: / A: pair. The prefixes keep the block
+    # scannable and stop the model blurring retrieved facts with instructions.
+    context_lines = []
+    for chunk in retrieved_chunks:
+        context_lines.append(f"Q: {chunk['question']}\nA: {chunk['answer']}")
+    faq_block = "\n\n".join(context_lines)
+
+    # Closing guardrail: cite only what is here, and say so when silent.
+    rag_instructions = (
+        "\n\nRAG INSTRUCTIONS:\n"
+        "Use ONLY the FAQ context below to answer the customer's question.\n"
+        "If the context does not contain the answer, say so politely and "
+        "offer to connect the customer with human support.\n"
+        "Never invent, extend, or guess policies, prices, or availability.\n"
+    )
+
+    return f"{SYSTEM_PROMPT}\n\nFAQ CONTEXT:\n{faq_block}{rag_instructions}"

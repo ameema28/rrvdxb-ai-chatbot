@@ -4,7 +4,8 @@ Chatbot service layer — business logic for processing messages.
 This layer sits between the API route and the AI client. It handles:
   - Classifying the user's intent (Day 4)
   - Routing to the right code path based on that intent
-  - Loading recent conversation history from the database
+  - Loading recent conversation history from the database (Day 3)
+  - Retrieving FAQ context for product_faq intents (Day 6 RAG)
   - Building the prompt with history + intent-specific context
   - Calling the Groq LLM
   - Persisting the new turn (with intent) to chat_history
@@ -25,13 +26,25 @@ from app.ai.chatbot.memory import (
     load_recent_history,
     save_turn,
 )
-from app.ai.chatbot.prompts import SYSTEM_PROMPT
+from app.ai.chatbot.prompts import SYSTEM_PROMPT, build_rag_system_prompt
+from app.ai.chatbot.rag.retriever import retrieve_faq_context
 from app.schemas.chatbot_schema import ChatResponse
 
 logger = logging.getLogger(__name__)
 
 # Path to mock data files
 _MOCK_DIR = os.path.join(os.path.dirname(__file__), "..", "mock_data")
+
+# Day 6 — appended to the general SYSTEM_PROMPT when a product_faq has no
+# matching FAQ chunk, so the chatbot admits the gap instead of inventing one.
+_NO_FAQ_MATCH_NOTE = (
+    "\n\nFAQ NOTE:\n"
+    "The customer asked a product or policy question, but no matching FAQ "
+    "entry was found in our knowledge base. Do NOT invent a policy, price, "
+    "or availability figure. Politely explain that you do not have that "
+    "specific information right now and offer to connect them with human "
+    "support."
+)
 
 
 def _load_json(filename: str) -> Any:
@@ -63,25 +76,17 @@ def _build_system_prompt_for_intent(
     intent: str, product_context: str
 ) -> Tuple[str, str]:
     """
-    Route the request based on intent and prepare (system_prompt, context).
+    Route NON-RAG intents and prepare (system_prompt, context).
 
-    This is where different intents diverge into different code paths:
-      - recommend_product: inject the full product catalog (existing behavior).
-      - product_faq:      future RAG grounding (TODO Day 6).
-      - deal_inquiry:     future deal engine (TODO Day 7).
-      - track_order_help: append order-tracking guidance to the prompt.
-      - general_chat:     standard flow.
+    product_faq is NOT routed here (Day 6): it is handled earlier in
+    handle_chat_message() by the RAG block, which must call the retriever
+    before it can decide between a grounded answer and the graceful fallback.
 
     Returns:
         A tuple of (system_prompt_to_use, context_to_inject).
     """
     if intent == "recommend_product":
-        # Existing behavior: the catalog lets the model ground its suggestions.
-        return SYSTEM_PROMPT, product_context
-
-    if intent == "product_faq":
-        # TODO: Day 6 — RAG pipeline will retrieve faqs.json + product docs
-        # and inject the grounded snippets here instead of the raw catalog.
+        # Existing behaviour: the catalog lets the model ground its suggestions.
         return SYSTEM_PROMPT, product_context
 
     if intent == "deal_inquiry":
@@ -112,13 +117,16 @@ async def handle_chat_message(
     """
     Process a user message and return an AI chat response with memory.
 
-    Day 4 flow:
+    Day 4-6 flow:
     - Step 1: Classify intent (regex fast-path, else LLM).
-    - Step 2: Route to the intent-specific code path (context prep).
-    - Step 3: Load recent history and build the prompt.
-    - Step 4: Call Groq LLM.
-    - Step 5: Persist the turn WITH the classified intent.
-    - Step 6: Return ChatResponse (now including intent).
+    - Step 2: Load recent history (memory).
+    - Step 3: Load product catalog context.
+    - Step 4: Route — product_faq goes through the Day-6 RAG retriever;
+              every other intent uses the intent-aware router.
+    - Step 5: Call the Groq LLM (history + routed context, optional RAG
+              system_prompt_override).
+    - Step 6: Persist the turn WITH the classified intent.
+    - Step 7: Return ChatResponse (reply, intent, confidence).
 
     Args:
         user_id: Authenticated user identifier (None -> anonymous 0).
@@ -145,7 +153,7 @@ async def handle_chat_message(
     )
 
     # ------------------------------------------------------------------
-    # 2. Load recent conversation history for this user
+    # 2. Load recent conversation history for this user (memory, Day 3)
     # ------------------------------------------------------------------
     recent_turns = load_recent_history(
         db_session=db, user_id=effective_user_id, limit=5
@@ -160,16 +168,49 @@ async def handle_chat_message(
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         logger.error("Failed to load product catalog: %s", exc)
         products = []
-
     product_context = _build_product_context(products)
 
     # ------------------------------------------------------------------
-    # 4. Route: pick system prompt + context based on the intent
+    # 4. Route — RAG path for product_faq, intent router for everything else
     # ------------------------------------------------------------------
-    system_prompt, context = _build_system_prompt_for_intent(intent, product_context)
+    system_prompt_override: Optional[str] = None
+
+    if intent == "product_faq":
+        # 4a. Day 6 — pull trustworthy FAQ chunks for this exact question.
+        faq_chunks = retrieve_faq_context(message)
+        if faq_chunks:
+            logger.info(
+                "RAG: retrieved %d FAQ chunk(s) for message=%r",
+                len(faq_chunks),
+                message[:80],
+            )
+            # Grounded prompt built in prompts.py (guardrails + FAQ context).
+            # product_context stays "" so the raw catalog is NOT layered
+            # on top of the FAQ context.
+            system_prompt_override = build_rag_system_prompt(faq_chunks)
+            system_prompt, context = SYSTEM_PROMPT, ""
+        else:
+            # 4b. Graceful degradation: nothing was relevant enough. Fall
+            # back to the general flow, but tell the model to admit the gap
+            # instead of inventing a policy (concept: honesty over guessing).
+            logger.info(
+                "RAG: no FAQ match for message=%r — graceful fallback",
+                message[:80],
+            )
+            system_prompt, context = (
+                SYSTEM_PROMPT + _NO_FAQ_MATCH_NOTE,
+                product_context,
+            )
+    else:
+        # 4c. Non-RAG intents keep the existing intent-aware router.
+        system_prompt, context = _build_system_prompt_for_intent(
+            intent, product_context
+        )
 
     # ------------------------------------------------------------------
-    # 5. Call the LLM via Groq SDK, passing history + routed context
+    # 5. Call the Groq LLM. When system_prompt_override is set it fully
+    #    replaces the base prompt and skips catalog injection, but history
+    #    is still appended inside llm_client — memory survives the RAG flow.
     # ------------------------------------------------------------------
     try:
         reply = send_chat_message(
@@ -177,6 +218,7 @@ async def handle_chat_message(
             user_message=message,
             product_context=context,
             history=history_string,
+            system_prompt_override=system_prompt_override,
         )
     except RuntimeError as exc:
         # The LLM client already logged the technical details.

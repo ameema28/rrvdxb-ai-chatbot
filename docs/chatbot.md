@@ -44,7 +44,7 @@
 - [x] Any API/parse failure degrades to `general_chat` with `confidence=0.0`
 - [x] Routing in `chatbot_service.py` via `_build_system_prompt_for_intent()`
   - [x] `recommend_product` → product catalog context
-  - [x] `product_faq` → `TODO: Day 6 — RAG pipeline`
+  - [x] `product_faq` → RAG pipeline (retrieve → ground → generate) — resolved in **Day 6**
   - [x] `deal_inquiry` → `TODO: Day 7 — Deal Finder integration`
   - [x] `track_order_help` → order-tracking guidance
   - [x] `general_chat` → standard flow
@@ -85,10 +85,41 @@
 > path and embedding model name are fixed code constants. On Windows, `pip install`
 > of `sentence-transformers` (→ `torch`) may hit `WinError 206` (path too long) —
 > fix by enabling the registry **Long Paths** setting or relocating the project.
-> RAG is standalone today; wiring it into the `product_faq` response is **Day 6**.
+> RAG was standalone through Day 5; **Day 6** wired it into the `product_faq` response.
 
-## What's Next (Day 6-10)
-- [ ] Wire RAG into the chat response: call `search_faqs()` in the `product_faq` path and inject top hits into the prompt (Day 6)
+### Day 6
+- [x] Understand how the retriever plugs into the flow (retrieve → augment → generate)
+- [x] Understand chunk-size + top-k cost/latency trade-offs and similarity thresholds
+- [x] Create `app/ai/chatbot/rag/retriever.py` — `retrieve_faq_context()`
+  - [x] Reuses `search_faqs()` / `get_vector_store()`; never rebuilds the index
+  - [x] Relevance gate on cosine similarity; clamps `k` (1–10) and threshold (0–1)
+  - [x] Graceful `[]` on blank query / missing·empty store / search failure
+  - [x] Returns `[{"question", "answer", "similarity"}]`, most-similar first
+- [x] Add `build_rag_system_prompt()` in `prompts.py` — Day-1 guardrails verbatim +
+      Q:/A: `FAQ CONTEXT:` block + cite-only / never-invent instructions
+- [x] Extend `send_chat_message()` with optional `system_prompt_override`
+      (thin Groq wrapper stays thin; product-catalog injection skipped; history still appended)
+- [x] Wire `product_faq` path in `chatbot_service.py`: retrieve → ground → generate;
+      no-match degrades to the general flow with polite `_NO_FAQ_MATCH_NOTE` and catalog
+      re-injected as fallback context
+- [x] Extend `intent.py` `product_faq` regex (shipping destination / delivery options /
+      stock questions); `track_order_help` precedence preserved
+- [x] Tests: `test_retriever.py` (6), RAG chat-flow tests (2) + no-match fallback assert,
+      intent routing regressions (4)
+- [x] `pytest -q` → **32 passed**
+- [x] No new packages; **no LangChain** (requirements.txt unchanged via Day 6)
+- [x] Manual verifications:
+  - [x] "do you ship to Pakistan?" → `product_faq`, grounded in the Pakistan FAQ chunk
+  - [x] "what is your return policy?" → grounded from the FAQ (14-day policy)
+  - [x] "warranty policy for a plumbus?" → graceful no-match + human-support hand-off
+
+> **Day 6 notes:** No new environment variables — the similarity threshold is a code
+> constant (`DEFAULT_SIMILARITY_THRESHOLD = 0.6`, chosen because the exact "return policy"
+> FAQ match measures ~0.66 and the spec-default 0.7 would drop it). No new packages (still
+> NO LangChain). `product_faq` questions are now answered from the retrieved FAQ index;
+> the Day-1 persona guardrails are preserved verbatim around the injected context.
+
+## What's Next (Day 7-10)
 - [ ] Deal Finder integration (`deal_inquiry` path, Day 7)
 - [ ] Add streaming response support
 - [ ] JWT authentication (replace X-User-Id stub)
@@ -107,5 +138,5 @@
 | `INTERNAL_JWT_SECRET` | Yes | Min 32 chars, used for service-to-service tokens |
 | `DEBUG` | No | `True` or `False` (default: True) |
 
-> No new environment variables introduced through Day 5. RAG uses local,
+> No new environment variables introduced through Day 6. RAG uses local,
 > offline embeddings — no API key required.
