@@ -53,5 +53,11 @@
     "id": 11,
     "question": "Do you have any discounts or promo codes?",
     "answer": "Yes, we run seasonal promotions and flash sales throughout the year. New customers get 10% off their first order. Active promo codes are always listed on our website and sent to subscribed members."
+  },
+  {
+    "id": 12,
+    "question": "Do you have the iPhone 14 in stock?",
+    "answer": "Our current catalog carries the iPhone 14 Pro Max, iPhone 13 Pro, and iPhone 13 Pro Max. We don't list the standard iPhone 14 at the moment; the iPhone 14 Pro Max is our closest alternative."
   }
+
 ]

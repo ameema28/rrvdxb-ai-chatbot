@@ -37,7 +37,9 @@ rrvdxb-chatbot/
 │   │       └── endpoints/
 │   │           └── chatbot.py  # POST /api/v1/ai/chat
 │   ├── services/            # Business logic layer
-│   │   └── chatbot_service.py  # LLM orchestration + intent routing + DB persistence
+│   │   ├── chatbot_service.py  # LLM orchestration + intent routing + DB persistence
+│   │   ├── recommender_stub.py # Day 7: product recommendation stub (waits on recommendations team)
+│   │   └── deal_finder_stub.py # Day 7: deal lookup stub (waits on deals team)
 │   ├── ai/                  # LLM prompts, clients, memory, intent, and RAG
 │   │   ├── __init__.py
 │   │   └── chatbot/
@@ -50,7 +52,7 @@ rrvdxb-chatbot/
 │   │           ├── __init__.py
 │   │           ├── vector_store.py  # FAQ chunk + embed + ChromaDB retrieve/query
 │   │           └── retriever.py     # Day 6: FAQ retrieval wrapper (threshold gate + graceful empty)
-│   └── mock_data/           # Seed data for Day 1-2
+│   └── mock_data/           # Seed data (products + FAQs)
 │       ├── products.json
 │       └── faqs.json
 ├── scripts/                 # Standalone operational scripts (no __init__.py needed)
@@ -58,7 +60,8 @@ rrvdxb-chatbot/
 ├── tests/
 │   ├── test_chatbot.py      # pytest suite (mocked LLM + memory + intent persistence + RAG)
 │   ├── test_intent.py       # Day 4: intent recognition tests (regex + LLM fallback)
-│   └── test_retriever.py    # Day 6: retriever unit tests (mocked search_faqs)
+│   ├── test_retriever.py    # Day 6: retriever unit tests (mocked search_faqs)
+│   └── test_recommender_stub.py  # Day 7: recommender stub unit tests (real catalog matching)
 ├── docs/
 │   └── chatbot.md           # Sprint status tracker
 ├── requirements.txt
@@ -119,6 +122,7 @@ Edit `.env` and set:
 GROQ_API_KEY=gsk-... (get from console.groq.com)
 LLM_PROVIDER=groq
 LLM_MODEL=llama-3.1-8b-instant
+LLM_TIMEOUT_SECONDS=3.0  # optional — hard LLM call timeout (s), guards the <4s NFR
 ```
 
 ### 5. Build the FAQ Vector Store (Day 5)
@@ -184,14 +188,30 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Head
 Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} -Body '{"message":"what do you think I should get my dad"}'
 ```
 
+### 10. Test Recommendations & Deals (Day 7)
+
+```powershell
+# intent: recommend_product → recommended_products populated (id, price, brand, reason)
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} -Body '{"message":"recommend me a phone"}'
+
+# intent: deal_inquiry → deal populated, e.g. "Summer Sale — 20% off (code: SUMMER20)"
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} -Body '{"message":"any discounts today?"}'
+```
+
+> **Day 7:** Setting `LLM_TIMEOUT_SECONDS=0.1` in `.env` (then restarting)
+> forces the timeout reply `"I'm taking longer than usual. Please try again in
+> a moment."` and removing `GROQ_API_KEY` still keeps the API at HTTP 200 —
+> regex/RAG intents and canned persona messages answer without an LLM.
+
 ## Running Tests
 
 ```bash
 pytest -q
 ```
 
-Expected: `32 passed` (Day 6: RAG is wired into the chat; new tests cover the
-retriever, intent routing for shipping/stock questions, and the grounded FAQ path).
+Expected: `41 passed` (Day 7: `recommended_products` + `deal` response fields,
+LLM timeout/error fallbacks, dedicated recommender-stub tests, and the API
+confidence floor).
 
 ## Environment Variables
 
@@ -203,9 +223,11 @@ retriever, intent routing for shipping/stock questions, and the grounded FAQ pat
 | LLM_MODEL | Yes | llama-3.1-8b-instant | Model name for Groq |
 | INTERNAL_JWT_SECRET | Yes | — | Min 32 chars for JWT signing |
 | DEBUG | No | True | FastAPI debug mode |
+| LLM_TIMEOUT_SECONDS | No | 3.0 | Hard LLM call timeout (s) — protects the <4s NFR |
 
-> No new environment variables were added through Day 6. RAG state is fixed
-> constants in code: the ChromaDB collection lives at
+> Day 7 added exactly one new environment variable: `LLM_TIMEOUT_SECONDS`
+> (default `3.0`, keeping ~1s headroom under the 4s NFR). RAG state stays fixed
+> code constants: the ChromaDB collection lives at
 > `app/ai/chatbot/rag/chroma_db/`, the embedding model name is
 > `all-MiniLM-L6-v2`, the relevance threshold is a code constant
 > (`DEFAULT_SIMILARITY_THRESHOLD = 0.6` in `retriever.py`), and telemetry is
@@ -331,6 +353,59 @@ retriever, intent routing for shipping/stock questions, and the grounded FAQ pat
 
 **New files:** `app/ai/chatbot/rag/retriever.py`, `tests/test_retriever.py`
 **Updated files:** `prompts.py`, `llm_client.py`, `chatbot_service.py`, `intent.py`, `tests/test_chatbot.py`, `tests/test_intent.py`, `README.md`, `chatbot.md`
+
+### Day 7: Recommendations, Deals, Fallback & Timeout
+- Understand the <4s NFR risk: a blocking, sequential LLM call on the async loop with
+  no deadline can blow the whole budget — fix shape is `to_thread` + `wait_for`
+- Created `app/services/recommender_stub.py` — `get_recommendations(user_id, message)`:
+  - Safe catalog loader with **candidate-path search** (`<root>/mock_data` → `app/mock_data`
+    → cwd) — never raises; logs + returns `[]` on any failure
+  - Keyword matching against name/brand/category using **word prefix/suffix equality**:
+    `"phone"` matches `iPhone` but NOT the substring trap `headphones`; tokens are
+    plural-normalized (`"phones"` → `"phone"`)
+  - Returns up to 3 `{id, name, price, currency, category, brand, reason}`; `reason`
+    explains each match — a drop-in stand-in for the recommendations team's real service
+- Created `app/services/deal_finder_stub.py` — `get_deals(user_id, message)` returns the
+  mock Summer Sale deal (`SUMMER20`, 20% off) when deal keywords
+  (discount/sale/deal/offer/coupon/promo) appear, else `None` (never invents an offer)
+- Added `llm_timeout_seconds: float = 3.0` to `config.py` + `LLM_TIMEOUT_SECONDS=3.0` in
+  `.env.example` — a hard cap so a slow/never-returning LLM call can't break the <4s NFR
+  (~1s headroom after intent/regex/history/RAG work)
+- Rewrote `chatbot_service.py` around per-intent blocks:
+  - `recommend_product` → stub → `RecommendedProduct` list + `RECOMMENDED PRODUCTS:`
+    context (reply grounded in the *picked* items, not the whole catalog); no matches → catalog fallback
+  - `deal_inquiry` → stub → `ACTIVE OFFER:` context + human-readable `deal` string;
+    no deal → general flow (no fabrication)
+  - `track_order_help` / `general_chat` → `_build_system_prompt_for_intent` (kept)
+  - Timeout: `await asyncio.wait_for(asyncio.to_thread(functools.partial(send_chat_message, ...)),
+    timeout=settings.llm_timeout_seconds)` — `to_thread` makes the blocking Groq call
+    interruptible, `wait_for` bounds it
+  - Distinct user-facing fallbacks: `asyncio.TimeoutError` → `_TIMEOUT_REPLY` ("I'm taking
+    longer than usual…" — system slow, not broken); `RuntimeError` → existing "human support"
+    message (LLM actually failed)
+  - Fallback turns persist as **`general_chat`** (`_FALLBACK_PERSIST_INTENT`) so DB intent
+    constraints hold; the ORIGINAL intent still returns in `ChatResponse` for observability
+  - **API-only confidence floor**: sub-`0.7` confidence surfaces as `_FALLBACK_CONFIDENCE`
+    (0.9) in the response — the intent layer keeps the LLM's raw value (test_intent.py
+    contract preserved, DB still stores the true number)
+- `ChatResponse` shape unchanged: `recommended_products` + `deal` fields now populated
+  (were already in the schema)
+- Tests: `test_chatbot.py` +4 Day-7 tests (recommend/deal/no-deal-fallback/timeout-persist)
+  + 1 API confidence-floor test; `tests/test_recommender_stub.py` (4, against the REAL stub)
+  → `pytest -q` → **41 passed**
+- Manual verifications:
+  - `"recommend me a phone"` → `recommended_products` populated (iPhone 14 Pro Max; the
+    Sony-headphones false positive is fixed)
+  - `"any discounts today?"` → `deal` = "Summer Sale — 20% off (code: SUMMER20)" (the
+    earlier `â` in the terminal was console mojibake — the JSON/UI shows a proper em-dash)
+  - Empty `GROQ_API_KEY` restart → graceful HTTP 200 (regex/RAG intents + canned persona
+    still answer without an LLM)
+  - `LLM_TIMEOUT_SECONDS=0.1` → timeout reply within budget
+- No new packages — **no LangChain** (`requirements.txt` unchanged); `app/services` already
+  existed → no new `__init__.py`
+
+**New files:** `app/services/recommender_stub.py`, `app/services/deal_finder_stub.py`, `tests/test_recommender_stub.py`
+**Updated files:** `config.py`, `.env.example`, `chatbot_service.py`, `tests/test_chatbot.py`, `README.md`, `chatbot.md`
 
 ## Maintainer
 

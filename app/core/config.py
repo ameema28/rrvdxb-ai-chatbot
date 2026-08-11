@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # --- Runtime ---
     debug: bool = Field(default=True, description="FastAPI debug mode")
 
+    # --- Performance / NFR (Day 7) ---
+    llm_timeout_seconds: float = Field(
+        default=3.0,
+        description="Hard ceiling for the Groq call (keeps the chat under the 4s NFR)",
+    )
+
     # Pydantic v2: use SettingsConfigDict instead of nested class Config
     model_config = SettingsConfigDict(
         env_file=".env",

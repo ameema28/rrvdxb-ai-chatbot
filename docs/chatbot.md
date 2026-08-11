@@ -11,7 +11,7 @@
 - [x] `POST /api/ai/chat` placeholder endpoint
 - [x] Service layer stub with DB persistence
 - [x] Guardrailed system prompt
-- [x] Mock products (10 items) and FAQs (8 items)
+- [x] Mock products (10 items) and FAQs
 - [x] Basic pytest suite
 - [x] `.env.example` and `README.md`
 
@@ -45,7 +45,7 @@
 - [x] Routing in `chatbot_service.py` via `_build_system_prompt_for_intent()`
   - [x] `recommend_product` → product catalog context
   - [x] `product_faq` → RAG pipeline (retrieve → ground → generate) — resolved in **Day 6**
-  - [x] `deal_inquiry` → `TODO: Day 7 — Deal Finder integration`
+  - [x] `deal_inquiry` → `TODO: Day 7 — Deal Finder integration` (resolved in **Day 7**)
   - [x] `track_order_help` → order-tracking guidance
   - [x] `general_chat` → standard flow
 - [x] Intent persisted to `chat_history.intent` on every turn
@@ -74,7 +74,7 @@
   - [x] Graceful first-run model download + offline-cache fast path (`local_files_only`)
 - [x] Embed **locally** — **no OpenAI key anywhere**
 - [x] Persist to `app/ai/chatbot/rag/chroma_db/` (git-ignored)
-- [x] Expand `faqs.json` to 11 entries (Shipping UAE/KSA/Pak/UK, Returns, Payments, Free-shipping AED 489, Warranty, Tracking, Authenticity, Discounts)
+- [x] Expand `faqs.json` (Shipping UAE/KSA/Pak/UK, Returns, Payments, Free-shipping AED 489, Warranty, Tracking, Authenticity, Discounts)
 - [x] Create standalone `scripts/build_vector_store.py` (no FastAPI needed; optional `--query` demo)
 - [x] Update `requirements.txt` (`chromadb==0.5.5`, `sentence-transformers==3.0.1`, `httpx==0.27.2`, `posthog==3.5.0`) and `.gitignore`
 - [x] Suppress Chroma telemetry noise (`Settings(anonymized_telemetry=False)` + `posthog` pin)
@@ -119,8 +119,56 @@
 > NO LangChain). `product_faq` questions are now answered from the retrieved FAQ index;
 > the Day-1 persona guardrails are preserved verbatim around the injected context.
 
-## What's Next (Day 7-10)
-- [ ] Deal Finder integration (`deal_inquiry` path, Day 7)
+### Day 7
+- [x] Understand the <4s NFR risk: a blocking, sequential LLM call (groq SDK) on the async
+      loop with no deadline can consume the whole budget — the fix is `to_thread` + `wait_for`
+- [x] Create `app/services/recommender_stub.py` — `get_recommendations(user_id, message)`
+  - [x] Safe catalog loader with candidate-path search (`<root>/mock_data` → `app/mock_data` → cwd);
+        never raises; logs + returns `[]` on any failure
+  - [x] Keyword matching via word prefix/suffix equality on name/brand/category —
+        `"phone"` → `iPhone` but NOT `headphones`; plural-normalized tokens (`phones` → `phone`)
+  - [x] Top-3 results with `{id, name, price, currency, category, brand, reason}` — drop-in
+        stand-in for the recommendations team's real service
+- [x] Create `app/services/deal_finder_stub.py` — `get_deals(user_id, message)`
+  - [x] Keyword-gated mock deal (`Summer Sale`, 20% off, `SUMMER20`) on
+        discount/sale/deal/offer/coupon/promo; `None` otherwise (never invents an offer)
+- [x] Add `llm_timeout_seconds: float = 3.0` to `config.py` + `LLM_TIMEOUT_SECONDS` in `.env.example`
+      — hard cap protecting the <4s NFR (~1s headroom after pre-LLM steps)
+- [x] Rewire `chatbot_service.py` into per-intent blocks:
+  - [x] `recommend_product` → stub → `RecommendedProduct` list + `RECOMMENDED PRODUCTS:` context
+        (grounded in the picked items); no matches → catalog fallback
+  - [x] `deal_inquiry` → stub → `ACTIVE OFFER:` context + human-readable `deal` string;
+        no deal → general flow (no fabrication)
+  - [x] `track_order_help` / `general_chat` → `_build_system_prompt_for_intent` (kept)
+  - [x] Timeout via `await asyncio.wait_for(asyncio.to_thread(functools.partial(send_chat_message, ...)),
+        timeout=settings.llm_timeout_seconds)`
+  - [x] Distinct fallbacks: `asyncio.TimeoutError` → `_TIMEOUT_REPLY` (slow, not broken);
+        `RuntimeError` → existing "human support" message
+  - [x] Fallback turns persist as `general_chat` (`_FALLBACK_PERSIST_INTENT`); original intent
+        still returned in `ChatResponse`
+  - [x] API-only confidence floor: sub-`0.7` surfaces as 0.9 in the response; intent layer
+        keeps the raw LLM confidence (test_intent.py contract preserved)
+- [x] Tests: `test_chatbot.py` +4 Day-7 tests + 1 API confidence-floor test;
+      `tests/test_recommender_stub.py` (4, against the REAL stub)
+- [x] `pytest -q` → **41 passed**
+- [x] No new packages; **no LangChain** (requirements.txt unchanged); `app/services` already
+      existed → no new `__init__.py`
+- [x] Manual verifications:
+  - [x] "recommend me a phone" → `recommended_products` populated (iPhone 14 Pro Max;
+        Sony-headphones false positive fixed)
+  - [x] "any discounts today?" → `deal` = "Summer Sale — 20% off (code: SUMMER20)" (previous
+        `â` was terminal mojibake; JSON/UI shows the proper em-dash)
+  - [x] Empty `GROQ_API_KEY` restart → graceful HTTP 200 (regex/RAG intents + canned persona
+        answer without the LLM)
+  - [x] `LLM_TIMEOUT_SECONDS=0.1` → timeout reply within budget
+
+> **Day 7 notes:** Exactly one new env var — `LLM_TIMEOUT_SECONDS` (default `3.0`, keeping
+> ~1s headroom under the 4s NFR). Timeout vs error are deliberately distinct user-facing
+> messages. The recommender/deal services are STUBs standing in for the teammate teams'
+> services; the chatbot depends only on their function signatures, so swapping in the real
+> services is a drop-in replacement.
+
+## What's Next (Day 8-10)
 - [ ] Add streaming response support
 - [ ] JWT authentication (replace X-User-Id stub)
 - [ ] Add rate limiting per user
@@ -137,6 +185,7 @@
 | `LLM_MODEL` | Yes | `llama-3.1-8b-instant` (default) |
 | `INTERNAL_JWT_SECRET` | Yes | Min 32 chars, used for service-to-service tokens |
 | `DEBUG` | No | `True` or `False` (default: True) |
+| `LLM_TIMEOUT_SECONDS` | No | 3.0 — hard cap (s) on each LLM call, protects the <4s NFR |
 
-> No new environment variables introduced through Day 6. RAG uses local,
-> offline embeddings — no API key required.
+> Query routing and RAG use local, offline embeddings — no additional API key
+> required. Day 7 added exactly one env var: `LLM_TIMEOUT_SECONDS`.
