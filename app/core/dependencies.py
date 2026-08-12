@@ -7,10 +7,11 @@ This promotes testability and keeps route handlers clean.
 
 from typing import Generator, Optional
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
+from app.middleware.error_handler import AuthenticationError, ValidationError
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -29,26 +30,34 @@ def get_db() -> Generator[Session, None, None]:
 
 
 async def get_current_user_id(
-    x_user_id: Optional[int] = Header(None, alias="X-User-Id", description="User ID from client/gateway")
+    x_user_id: Optional[str] = Header(
+        default=None,
+        alias="X-User-Id",
+        description="User ID from client/gateway (STUB — replaced by JWT later)",
+    )
 ) -> int:
     """
-    STUB: Extract the current user ID from the X-User-Id header.
+    STUB: Extract and validate the current user ID from the X-User-Id header.
 
-    In production, this will be replaced by a real JWT verification layer
-    that decodes an Authorization token and returns the authenticated user's ID.
+    In production this will be replaced by real JWT verification that decodes
+    an Authorization token and returns the authenticated user's ID from the
+    token's `sub` claim. Because every route depends on this single function,
+    that swap touches NO route code.
 
-    Args:
-        x_user_id: Integer user ID passed in the X-User-Id header.
+    Missing header -> AuthenticationError (401)
+    Non-integer     -> ValidationError   (400)
 
     Returns:
-        The authenticated user's ID.
+        The authenticated user's ID as an int.
 
     Raises:
-        HTTPException(401): If the header is missing.
+        AuthenticationError: If the header is missing.
+        ValidationError:     If the header is not a valid integer.
     """
+    # TODO: Replace with JWT validation when Auth API is ready
     if x_user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing X-User-Id header. Authentication required.",
-        )
-    return x_user_id
+        raise AuthenticationError(detail="X-User-Id header missing")
+    try:
+        return int(x_user_id)
+    except (TypeError, ValueError):
+        raise ValidationError(detail="X-User-Id must be an integer")

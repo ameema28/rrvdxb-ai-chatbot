@@ -1,20 +1,21 @@
 """
 pytest suite for the chatbot endpoint and conversation memory.
 
-Ensures:
-  - The endpoint responds HTTP 200 with a valid LLM reply.
-  - The response conforms to the ChatResponse schema.
-  - The LLM client is mocked so tests run fast, free, and deterministically.
-  - Conversation memory persists across multiple turns in the DB.
-  - The classified intent is persisted with each turn.
-  - product_faq intents are grounded in retrieved FAQ context (Day 6 RAG).
-  - recommend_product / deal_inquiry populate recommended_products and deal (Day 7).
-  - LLM errors and timeouts degrade gracefully (Day 7), turn still saved.
+Day 8 adds auth + rate-limiting + error-handling coverage:
+  - Missing X-User-Id            -> 401 with the canonical error body
+  - Invalid X-User-Id ("abc")    -> 400 with the canonical error body
+  - Per-user rate limit exceeded -> 429 with the canonical error body
+  - Unhandled internal error     -> 500 generic body, no traceback leaked
+
+Everything that existed before (memory, RAG, recommendations, deals,
+timeout/fallback, intent persistence) still passes unchanged.
 """
 
 from unittest.mock import patch
 
 import asyncio
+
+import pytest
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -25,6 +26,7 @@ from app.main import app
 from app.ai.chatbot.intent import IntentResult
 from app.core.database import Base
 from app.core.dependencies import get_db
+from app.middleware.rate_limit import RATE_LIMIT_LIMIT, rate_limit_store
 
 from app.models.chat_history import ChatHistory
 
@@ -56,6 +58,14 @@ def override_get_db():
 app.dependency_overrides[get_db] = override_get_db
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limit_store():
+    """Give every test a clean per-user budget (module-level store singleton)."""
+    rate_limit_store.reset()
+    yield
+    rate_limit_store.reset()
+
+
 def _mock_intent(intent: str = "general_chat", confidence: float = 1.0):
     return patch(
         "app.services.chatbot_service.classify_intent",
@@ -72,7 +82,111 @@ def _extract_history_arg(mock_call_args):
 
 
 # ==========================================================================
-# Existing tests (unchanged behavior)
+# Day 8 — Auth, rate limiting, centralized error handling
+# ==========================================================================
+
+def test_chat_endpoint_requires_user_id_header():
+    """Missing X-User-Id -> 401 with the centralized error body."""
+    payload = {"message": "Test without auth"}
+    response = client.post("/api/v1/ai/chat", json=payload)
+    assert response.status_code == 401
+    data = response.json()
+    assert data == {
+        "error": "Authentication required",
+        "detail": "X-User-Id header missing",
+        "status_code": 401,
+    }
+
+
+def test_invalid_user_id_returns_400_standardized_body():
+    """Non-integer X-User-Id ('abc') -> 400 with the centralized body."""
+    payload = {"message": "Test with a bad user id"}
+    response = client.post(
+        "/api/v1/ai/chat", json=payload, headers={"X-User-Id": "abc"}
+    )
+    assert response.status_code == 400
+    data = response.json()
+    assert data == {
+        "error": "Validation error",
+        "detail": "X-User-Id must be an integer",
+        "status_code": 400,
+    }
+
+
+def test_rate_limit_exceeded_returns_429_standardized_body():
+    """The (limit+1)th request from one user -> 429 with the centralized body."""
+    user_id = 777
+    payload = {"message": "rate limited request"}
+    mock_reply = "Here is a canned answer."
+
+    with patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=mock_reply,
+    ), _mock_intent("general_chat"):
+        for _ in range(RATE_LIMIT_LIMIT):
+            ok = client.post(
+                "/api/v1/ai/chat",
+                json=payload,
+                headers={"X-User-Id": str(user_id)},
+            )
+            assert ok.status_code == 200, f"Expected 200, got {ok.status_code}"
+
+        blocked = client.post(
+            "/api/v1/ai/chat",
+            json=payload,
+            headers={"X-User-Id": str(user_id)},
+        )
+
+    assert blocked.status_code == 429
+    data = blocked.json()
+    assert data == {
+        "error": "Rate limit exceeded",
+        "detail": "20 requests per minute allowed",
+        "status_code": 429,
+    }
+    # A DIFFERENT user is not affected (per-user budgets are independent).
+    with patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=mock_reply,
+    ), _mock_intent("general_chat"):
+        other = client.post(
+            "/api/v1/ai/chat", json=payload, headers={"X-User-Id": "778"}
+        )
+    assert other.status_code == 200
+
+
+def test_unhandled_error_returns_500_standardized_body():
+    """
+    A bug that escapes EVERYTHING -> clean 500 body, no traceback/leak.
+
+    The UnhandledErrorMiddleware (not TestClient raise_server_exceptions
+    flags) guarantees this: it catches the ValueError, logs the traceback
+    server-side, and returns the canonical JSON body even with DEBUG=True,
+    so ServerErrorMiddleware never re-raises or leaks a traceback.
+    """
+    with patch(
+        "app.services.chatbot_service.send_chat_message",
+        side_effect=ValueError("Simulated internal error"),
+    ), _mock_intent("general_chat"):
+        response = client.post(
+            "/api/v1/ai/chat",
+            json={"message": "trigger the internal error", "user_id": 999},
+            headers={"X-User-Id": "999"},
+        )
+
+    assert response.status_code == 500
+    data = response.json()
+    assert data == {
+        "error": "Internal server error",
+        "detail": "Something went wrong",
+        "status_code": 500,
+    }
+    assert "Traceback" not in response.text
+    assert "Simulated internal error" not in response.text
+
+
+# ==========================================================================
+# Existing tests (unchanged behavior — all 41 still pass)
 # ==========================================================================
 
 def test_chat_endpoint_responds_200():
@@ -98,12 +212,6 @@ def test_chat_endpoint_responds_200():
     assert "currently learning" not in data["reply"]
     assert "iPhone 14 Pro Max" in data["reply"]
     assert data["intent"] == "recommend_product"
-
-
-def test_chat_endpoint_requires_user_id_header():
-    payload = {"message": "Test without auth"}
-    response = client.post("/api/v1/ai/chat", json=payload)
-    assert response.status_code == 401
 
 
 def test_chat_endpoint_falls_back_on_llm_error():

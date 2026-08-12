@@ -1,181 +1,335 @@
-# RRVDXB AI Shopping Chatbot — Sprint Status
+# RRVDXB AI Shopping Chatbot — Engineering Log & Architecture Decisions
 
-## What's Done
+This document is the canonical engineering log and architecture decision record
+(ADR) for the RRVDXB chatbot. It covers the full build history from scaffold
+through auth/rate-limiting, with rationale for major choices, tuning notes, and
+manual verification results.
 
-### Day 1
-- [x] FastAPI project scaffold with clean architecture
-- [x] Pydantic Settings with `.env` support
-- [x] SQLAlchemy + SQLite setup
-- [x] `chat_history` model matching required schema
-- [x] Request/response schemas with validation
-- [x] `POST /api/ai/chat` placeholder endpoint
-- [x] Service layer stub with DB persistence
-- [x] Guardrailed system prompt
-- [x] Mock products (10 items) and FAQs
-- [x] Basic pytest suite
-- [x] `.env.example` and `README.md`
+> For the project storefront (quick start, features, tech stack), see
+> [`README.md`](../README.md).
 
-### Day 2
-- [x] Integrate Groq LLM (direct SDK, no LangChain)
-- [x] Singleton Groq client with connection reuse
-- [x] Product context injection into system prompt
-- [x] Graceful error handling for API failures
-- [x] Mocked LLM in pytest — fast, free, deterministic tests
-- [x] Updated docs to reflect Groq (not OpenAI)
+---
 
-### Day 3
-- [x] DB-backed conversation memory (`app/ai/chatbot/memory.py`)
-- [x] `save_turn`, `load_recent_history`, `format_history_for_prompt`
-- [x] Context windowing: load only last N=5 turns (not full history)
-- [x] History injected into LLM prompt before each call
-- [x] New turn persisted to `chat_history` after each response
-- [x] Memory test: two-turn conversation, real SQLite in-memory DB
-- [x] Assert second call's prompt contains first turn context
-- [x] No LangChain added — implemented manually with SQLAlchemy
+## Milestone 1: Project Scaffold
 
-### Day 4
-- [x] Intent classification as a separate pipeline step (`app/ai/chatbot/intent.py`)
-- [x] Hybrid approach: regex fast-path + LLM fallback
-- [x] Regex fast-path returns `confidence=1.0` with zero LLM calls
-- [x] LLM classification reuses the existing Groq client (`send_chat_message`)
-- [x] `INTENT_CLASSIFICATION_PROMPT` with strict JSON output contract + few-shot examples
-- [x] Defensive JSON parsing (strip code fences, try/except, enum allow-list, clamp confidence)
-- [x] Confidence threshold `0.7` → low-confidence intents override to `general_chat` (confidence kept)
-- [x] Any API/parse failure degrades to `general_chat` with `confidence=0.0`
-- [x] Routing in `chatbot_service.py` via `_build_system_prompt_for_intent()`
-  - [x] `recommend_product` → product catalog context
-  - [x] `product_faq` → RAG pipeline (retrieve → ground → generate) — resolved in **Day 6**
-  - [x] `deal_inquiry` → `TODO: Day 7 — Deal Finder integration` (resolved in **Day 7**)
-  - [x] `track_order_help` → order-tracking guidance
-  - [x] `general_chat` → standard flow
-- [x] Intent persisted to `chat_history.intent` on every turn
-- [x] `ChatResponse` exposes the classified `intent`
-- [x] `tests/test_intent.py` created (regex no-LLM, LLM fallback, malformed JSON, unknown intent, API failure, confidence override)
-- [x] `tests/test_chatbot.py` updated to mock the classifier + assert intent persistence
-- [x] `pytest -q` → 20 passed
-- [x] No new packages; no LangChain added
-- [x] Post-review hardening:
-  - [x] `\b` word-boundaries on all regex patterns (`suggestion` ≠ `suggest`)
-  - [x] `gift` restricted to shopping phrases — return-policy-on-gift routes to `product_faq`
-  - [x] `\bbuy\b` added → bare buying questions route to `recommend`
-  - [x] Confidence clamped to `[0.0, 1.0]` (LLM `9.5` → `1.0`)
-  - [x] Prompt now says: "If fits none, choose `general_chat` with confidence ≤ 0.5"
-  - [x] Catalog header only injected when `product_context` is non-empty
-  - [x] New regression tests: gift-return→`product_faq`, bare-`buy`→`recommend`, confidence clamp
+- FastAPI scaffold with clean layered architecture (`api/`, `services/`, `ai/`, `core/`)
+- Pydantic v2 `Settings` with `.env` support (`pydantic-settings`)
+- SQLAlchemy 2.0 + SQLite with `SessionLocal` dependency injection
+- `chat_history` ORM model matching the required schema
+- Request/response Pydantic schemas with strict validation
+- `POST /api/v1/ai/chat` placeholder endpoint
+- Service-layer stub with DB persistence on every turn
+- Guardrailed system prompt (persona + guardrails against price/policy invention)
+- Mock products (10 items) and FAQs (seed data)
+- Basic pytest suite; `.env.example` and `README.md`
 
-### Day 5
-- [x] Understand RAG fundamentals (embeddings, cosine similarity, chunking, Vector DB trade-offs, RAG vs fine-tuning vs stuffing)
-- [x] Create `app/ai/chatbot/rag/__init__.py`
-- [x] Create `app/ai/chatbot/rag/vector_store.py`
-  - [x] `load_faqs()` — safe reads of `faqs.json` (missing file / malformed JSON / invalid entries handled)
-  - [x] `build_vector_store()` — chunk (1 Q&A per chunk) → embed (`all-MiniLM-L6-v2`) → persist to ChromaDB
-  - [x] Idempotent build: upsert + stale-delete; re-running never crashes or duplicates
-  - [x] `get_vector_store()` — lazy load; build only if `chroma.sqlite3` not already persisted
-  - [x] Graceful first-run model download + offline-cache fast path (`local_files_only`)
-- [x] Embed **locally** — **no OpenAI key anywhere**
-- [x] Persist to `app/ai/chatbot/rag/chroma_db/` (git-ignored)
-- [x] Expand `faqs.json` (Shipping UAE/KSA/Pak/UK, Returns, Payments, Free-shipping AED 489, Warranty, Tracking, Authenticity, Discounts)
-- [x] Create standalone `scripts/build_vector_store.py` (no FastAPI needed; optional `--query` demo)
-- [x] Update `requirements.txt` (`chromadb==0.5.5`, `sentence-transformers==3.0.1`, `httpx==0.27.2`, `posthog==3.5.0`) and `.gitignore`
-- [x] Suppress Chroma telemetry noise (`Settings(anonymized_telemetry=False)` + `posthog` pin)
-- [x] Verified via `python scripts/build_vector_store.py --query "do you ship to Pakistan?"` → Pakistan FAQ top hit (~0.79)
-- [x] `pytest -q` → 20 passed (RAG not yet wired to chat, so existing tests unaffected)
+---
 
-> **Day 5 notes:** No new environment variables were added. The Chroma collection
-> path and embedding model name are fixed code constants. On Windows, `pip install`
-> of `sentence-transformers` (→ `torch`) may hit `WinError 206` (path too long) —
-> fix by enabling the registry **Long Paths** setting or relocating the project.
-> RAG was standalone through Day 5; **Day 6** wired it into the `product_faq` response.
+## Milestone 2: Groq LLM Integration
 
-### Day 6
-- [x] Understand how the retriever plugs into the flow (retrieve → augment → generate)
-- [x] Understand chunk-size + top-k cost/latency trade-offs and similarity thresholds
-- [x] Create `app/ai/chatbot/rag/retriever.py` — `retrieve_faq_context()`
-  - [x] Reuses `search_faqs()` / `get_vector_store()`; never rebuilds the index
-  - [x] Relevance gate on cosine similarity; clamps `k` (1–10) and threshold (0–1)
-  - [x] Graceful `[]` on blank query / missing·empty store / search failure
-  - [x] Returns `[{"question", "answer", "similarity"}]`, most-similar first
-- [x] Add `build_rag_system_prompt()` in `prompts.py` — Day-1 guardrails verbatim +
-      Q:/A: `FAQ CONTEXT:` block + cite-only / never-invent instructions
-- [x] Extend `send_chat_message()` with optional `system_prompt_override`
-      (thin Groq wrapper stays thin; product-catalog injection skipped; history still appended)
-- [x] Wire `product_faq` path in `chatbot_service.py`: retrieve → ground → generate;
-      no-match degrades to the general flow with polite `_NO_FAQ_MATCH_NOTE` and catalog
-      re-injected as fallback context
-- [x] Extend `intent.py` `product_faq` regex (shipping destination / delivery options /
-      stock questions); `track_order_help` precedence preserved
-- [x] Tests: `test_retriever.py` (6), RAG chat-flow tests (2) + no-match fallback assert,
-      intent routing regressions (4)
-- [x] `pytest -q` → **32 passed**
-- [x] No new packages; **no LangChain** (requirements.txt unchanged via Day 6)
-- [x] Manual verifications:
-  - [x] "do you ship to Pakistan?" → `product_faq`, grounded in the Pakistan FAQ chunk
-  - [x] "what is your return policy?" → grounded from the FAQ (14-day policy)
-  - [x] "warranty policy for a plumbus?" → graceful no-match + human-support hand-off
+- Created `app/ai/chatbot/llm_client.py` — singleton Groq client (connection reuse) with error handling
+- Replaced the placeholder echo with real LLM calls via `send_chat_message()`
+- Product catalog from `products.json` injected into the system prompt as runtime context
+- Graceful fallback when Groq fails (rate limit, timeout, auth error) — canned persona message, never crashes the endpoint
+- LLM mocked in tests via `unittest.mock.patch` — fast, free, deterministic; no real API calls in CI
 
-> **Day 6 notes:** No new environment variables — the similarity threshold is a code
-> constant (`DEFAULT_SIMILARITY_THRESHOLD = 0.6`, chosen because the exact "return policy"
-> FAQ match measures ~0.66 and the spec-default 0.7 would drop it). No new packages (still
-> NO LangChain). `product_faq` questions are now answered from the retrieved FAQ index;
-> the Day-1 persona guardrails are preserved verbatim around the injected context.
+**New/updated files:** `llm_client.py`, `chatbot_service.py`, `test_chatbot.py`, `prompts.py`, `README.md`, `chatbot.md`
 
-### Day 7
-- [x] Understand the <4s NFR risk: a blocking, sequential LLM call (groq SDK) on the async
-      loop with no deadline can consume the whole budget — the fix is `to_thread` + `wait_for`
-- [x] Create `app/services/recommender_stub.py` — `get_recommendations(user_id, message)`
-  - [x] Safe catalog loader with candidate-path search (`<root>/mock_data` → `app/mock_data` → cwd);
-        never raises; logs + returns `[]` on any failure
-  - [x] Keyword matching via word prefix/suffix equality on name/brand/category —
-        `"phone"` → `iPhone` but NOT `headphones`; plural-normalized tokens (`phones` → `phone`)
-  - [x] Top-3 results with `{id, name, price, currency, category, brand, reason}` — drop-in
-        stand-in for the recommendations team's real service
-- [x] Create `app/services/deal_finder_stub.py` — `get_deals(user_id, message)`
-  - [x] Keyword-gated mock deal (`Summer Sale`, 20% off, `SUMMER20`) on
-        discount/sale/deal/offer/coupon/promo; `None` otherwise (never invents an offer)
-- [x] Add `llm_timeout_seconds: float = 3.0` to `config.py` + `LLM_TIMEOUT_SECONDS` in `.env.example`
-      — hard cap protecting the <4s NFR (~1s headroom after pre-LLM steps)
-- [x] Rewire `chatbot_service.py` into per-intent blocks:
-  - [x] `recommend_product` → stub → `RecommendedProduct` list + `RECOMMENDED PRODUCTS:` context
-        (grounded in the picked items); no matches → catalog fallback
-  - [x] `deal_inquiry` → stub → `ACTIVE OFFER:` context + human-readable `deal` string;
-        no deal → general flow (no fabrication)
-  - [x] `track_order_help` / `general_chat` → `_build_system_prompt_for_intent` (kept)
-  - [x] Timeout via `await asyncio.wait_for(asyncio.to_thread(functools.partial(send_chat_message, ...)),
-        timeout=settings.llm_timeout_seconds)`
-  - [x] Distinct fallbacks: `asyncio.TimeoutError` → `_TIMEOUT_REPLY` (slow, not broken);
-        `RuntimeError` → existing "human support" message
-  - [x] Fallback turns persist as `general_chat` (`_FALLBACK_PERSIST_INTENT`); original intent
-        still returned in `ChatResponse`
-  - [x] API-only confidence floor: sub-`0.7` surfaces as 0.9 in the response; intent layer
-        keeps the raw LLM confidence (test_intent.py contract preserved)
-- [x] Tests: `test_chatbot.py` +4 Day-7 tests + 1 API confidence-floor test;
-      `tests/test_recommender_stub.py` (4, against the REAL stub)
-- [x] `pytest -q` → **41 passed**
-- [x] No new packages; **no LangChain** (requirements.txt unchanged); `app/services` already
-      existed → no new `__init__.py`
-- [x] Manual verifications:
-  - [x] "recommend me a phone" → `recommended_products` populated (iPhone 14 Pro Max;
-        Sony-headphones false positive fixed)
-  - [x] "any discounts today?" → `deal` = "Summer Sale — 20% off (code: SUMMER20)" (previous
-        `â` was terminal mojibake; JSON/UI shows the proper em-dash)
-  - [x] Empty `GROQ_API_KEY` restart → graceful HTTP 200 (regex/RAG intents + canned persona
-        answer without the LLM)
-  - [x] `LLM_TIMEOUT_SECONDS=0.1` → timeout reply within budget
+---
 
-> **Day 7 notes:** Exactly one new env var — `LLM_TIMEOUT_SECONDS` (default `3.0`, keeping
-> ~1s headroom under the 4s NFR). Timeout vs error are deliberately distinct user-facing
-> messages. The recommender/deal services are STUBs standing in for the teammate teams'
-> services; the chatbot depends only on their function signatures, so swapping in the real
-> services is a drop-in replacement.
+## Milestone 3: DB-Backed Conversation Memory
 
-## What's Next (Day 8-10)
-- [ ] Add streaming response support
-- [ ] JWT authentication (replace X-User-Id stub)
-- [ ] Add rate limiting per user
-- [ ] Dockerize the application
-- [ ] Load testing for <4s latency NFR
+- Created `app/ai/chatbot/memory.py` with three primitives:
+  - `save_turn(user_id, message, response, intent)` — persists to `chat_history`
+  - `load_recent_history(user_id, limit=5)` — loads the last N turns
+  - `format_history_for_prompt(turns)` — formats as `User: ...\nAssistant: ...` for prompt injection
+- Configurable context window (N=5) — loads recent turns only, keeping token count bounded
+- `chatbot_service.py` loads history before each LLM call and saves the turn after the response
+- `llm_client.py` accepts a `history` parameter and injects prior turns
+- Anonymous-user fallback: `user_id` → `0` when `None`, so persistence always succeeds
+- No LangChain — implemented with SQLAlchemy for full control
 
-## Environment Variables Needed
+**Testing:** `test_conversation_memory_persists_across_turns` (in-memory SQLite + `StaticPool`) asserts the second call's prompt contains the first turn's context.
+
+---
+
+## Milestone 4: Intent Recognition & Routing
+
+- Created `app/ai/chatbot/intent.py` — hybrid classifier with two stages:
+  1. **Regex fast-path** — zero LLM cost, `confidence=1.0`; covers `recommend_product`, `track_order_help`, `deal_inquiry`, `product_faq`
+  2. **LLM fallback** — reuses the Groq client; no second API client
+- `IntentResult` Pydantic model: `intent`, `confidence`, `entities`
+- Defense-in-depth JSON parsing: strips markdown fences, `json.loads` in try/except, enum allow-list, confidence clamped to `[0.0, 1.0]`
+- Confidence threshold `0.7` — low-confidence labels override to `general_chat` (original confidence kept for observability)
+- Any API/parse failure degrades to `general_chat` with `confidence=0.0`
+- `INTENT_CLASSIFICATION_PROMPT` with strict JSON contract + few-shot examples
+- Routing in `chatbot_service.py` via `_build_system_prompt_for_intent()`:
+  - `recommend_product` → product catalog context
+  - `product_faq` → RAG pipeline (resolved in Milestone 6)
+  - `deal_inquiry` → Deal Finder (resolved in Milestone 7)
+  - `track_order_help` → order-tracking guidance
+  - `general_chat` → standard flow
+- Intent persisted to `chat_history.intent`; `ChatResponse` exposes `intent` and `confidence`
+
+**Post-review hardening:** word boundaries on all regexes (`suggestion` ≠ `suggest`); `gift` restricted to shopping phrases; `\bbuy\b` added; low-confidence instruction in the prompt; catalog header only injected when context is non-empty; regression tests for each.
+
+**Testing:** `pytest -q` → 20 passed
+
+---
+
+## Milestone 5: RAG Fundamentals & Vector Store
+
+- Created `app/ai/chatbot/rag/vector_store.py`:
+  - `load_faqs()` — safe reads of `faqs.json` (missing file / malformed JSON / invalid entries handled)
+  - `build_vector_store()` — one Q&A pair per chunk, embedded locally (`all-MiniLM-L6-v2`, 384-dim), persisted to ChromaDB; **idempotent** (upsert + stale-delete)
+  - `get_vector_store()` — lazy build only when `chroma.sqlite3` is not on disk
+  - `search_faqs(query, top_k)` — cosine similarity search with ranking + score
+- Embedded entirely locally — no OpenAI key; persists to git-ignored `chroma_db/`
+- Expanded `faqs.json` to 11 coverage entries (Shipping UAE/KSA/Pak/UK, Returns, Payments, Free-shipping AED 489, Warranty, Tracking, Authenticity, Discounts)
+- `scripts/build_vector_store.py` — standalone build script, optional `--query` demo
+- First-run model download handled gracefully with offline-cache fast path (`local_files_only`)
+- Chroma telemetry suppressed (`anonymized_telemetry=False` + pinned `posthog==3.5.0`)
+- Added `chromadb==0.5.5`, `sentence-transformers==3.0.1`, `httpx==0.27.2` to requirements
+
+**Manual verification:** `python scripts/build_vector_store.py --query "do you ship to Pakistan?"` → Pakistan FAQ top hit (~0.79 similarity)
+
+**Testing:** `pytest -q` → 20 passed (RAG not yet wired to chat)
+
+---
+
+## Milestone 6: RAG Pipeline Integration
+
+- Created `app/ai/chatbot/rag/retriever.py`:
+  - `retrieve_faq_context(query, k=3, similarity_threshold=0.6)` reuses `search_faqs()`/`get_vector_store()` (never rebuilds the index)
+  - Returns only chunks above the relevance threshold; clamp `k` (1–10) and threshold (0–1)
+  - Returns `[]` gracefully on blank query, missing/empty store, or search failure
+  - Output contract: `[{"question", "answer", "similarity"}]`, most-similar first
+- `build_rag_system_prompt()` in `prompts.py`: Day-1 guardrails preserved verbatim + flagged `FAQ CONTEXT:` block + cite-only / never-invent instructions
+- `send_chat_message()` extended with optional `system_prompt_override` (replaces base prompt, skips catalog injection; history still appended) — client stays a thin Groq wrapper
+- Wired into the `product_faq` path: chunks found → RAG prompt; no chunks → polite no-match fallback with catalog re-injected
+- Intent regex extended for shipping-destination / delivery-options / stock questions; `track_order_help` precedence preserved
+
+**Tuning note — why 0.6:** the exact "return policy" FAQ match scores ~0.66, so 0.7 would wrongly drop it. 0.6 keeps strong hits (shipping ~0.79, returns ~0.66) while excluding junk (0.23–0.45) — measured empirically, not guessed.
+
+**Manual verifications:** "do you ship to Pakistan?" → `product_faq` grounded in the Pakistan chunk; "what is your return policy?" → grounded (14-day policy); "warranty policy for a plumbus?" → graceful no-match + human-support hand-off
+
+**Testing:** `pytest -q` → 32 passed
+
+---
+
+## Milestone 7: Recommendations, Deals, Fallback & Timeout
+
+### NFR protection architecture
+
+The Groq SDK is synchronous; an unbounded blocking call on the async loop can consume the <4s budget. The fix:
+
+```python
+await asyncio.wait_for(
+    asyncio.to_thread(functools.partial(send_chat_message, ...)),
+    timeout=settings.llm_timeout_seconds,
+)
+```
+
+`to_thread` moves the blocking call off the event loop (interruptible); `wait_for` bounds it. With ~1s of pre-LLM overhead, a 3.0s timeout protects the NFR.
+
+### Recommendation stub
+
+`app/services/recommender_stub.py` — `get_recommendations(user_id, message)`: safe catalog loader (candidate-path search, never raises), keyword matching via word prefix/suffix equality (`phone` → `iPhone`, not `headphones`), plural normalization, top-3 results with `reason`.
+
+### Deal finder stub
+
+`app/services/deal_finder_stub.py` — `get_deals(user_id, message)`: keyword-gated Summer Sale deal (`SUMMER20`, 20% off); `None` otherwise (never invents an offer).
+
+### Service rewire
+
+- `recommend_product` → stub → `RecommendedProduct` list + `RECOMMENDED PRODUCTS:` context; no matches → catalog fallback
+- `deal_inquiry` → stub → `ACTIVE OFFER:` context + human-readable `deal`; no deal → general flow
+- Timeout (`asyncio.TimeoutError`) → `"I'm taking longer than usual. Please try again in a moment."` (slow, not broken)
+- Provider error (`RuntimeError`) → existing "human support" message
+- Fallback turns persist as `general_chat` (`_FALLBACK_PERSIST_INTENT`) so DB constraints hold; original intent still returned in `ChatResponse`
+- API-only confidence floor: sub-`0.7` surfaces as 0.9 in the response; intent layer keeps the raw value (DB stores the true number)
+
+**Manual verifications:** "recommend me a phone" → `recommended_products` populated (Sony-headphones false positive fixed); "any discounts today?" → deal = "Summer Sale — 20% off (code: SUMMER20)"; empty `GROQ_API_KEY` restart → graceful 200; `LLM_TIMEOUT_SECONDS=0.1` → timeout reply within budget
+
+**Testing:** `pytest -q` → 41 passed
+
+---
+
+## Milestone 8: Auth Stubs, Rate Limiting & Centralized Error Handling
+
+### Auth rationale
+
+Every chat request may trigger a paid LLM inference, so authentication must run **before** any LLM work to prevent cost abuse. `X-User-Id` is a stub; when the Auth API ships, `get_current_user_id` decodes a JWT with zero route changes (dependency injection is the seam).
+
+### Rate limiting architecture
+
+- **Per-user vs global:** a global budget lets one noisy user starve everyone; per-user gives fair independent budgets + a per-customer abuse signal.
+- **In-memory vs Redis:** in-memory is fine for one dev process; with N uvicorn workers each keeps its own counter (real limit becomes N × configured) → shared Redis required in production.
+- **Custom vs slowapi:** chose a custom `RateLimitStore` ABC + `InMemoryRateLimitStore`. Zero new dependencies, no decorator magic, store isolated behind an interface; Redis swap is a one-line change in the guard.
+
+### Implementation
+
+- `app/middleware/error_handler.py`:
+  - `AppError` base (class-level `error`/`status_code`, instance `detail`, `to_dict()`)
+  - `AuthenticationError` (401), `ValidationError` (400), `RateLimitExceeded` (429), `AIServiceError` (502, for future non-recoverable AI-service failures)
+  - Canonical body `{"error", "detail", "status_code"}` on every error path
+  - Handlers: `app_error_handler`, `validation_error_handler` (422 → 400), `http_exception_handler` (404/405 → same shape), `unhandled_exception_handler` (generic 500, logs server-side, never exposes stacks/secrets)
+- `app/middleware/rate_limit.py`: `RateLimitStore` ABC (`allow_request(key, limit, window_seconds)`); `InMemoryRateLimitStore` sliding-window deque + lock; `check_rate_limit` dependency keyed by resolved `X-User-Id`; 20 requests/minute/user; 21st → 429
+- `app/core/dependencies.py`: `get_current_user_id` reads `X-User-Id` (string) → int; missing → 401; non-integer → 400; `# TODO: Replace with JWT validation when Auth API is ready`
+- `app/api/v1/endpoints/chatbot.py`: auth + rate-limit guard wired via `Depends`; all errors flow to centralized handlers — no catch-and-silence
+- `app/main.py`: registers exception handlers + `UnhandledErrorMiddleware` (guarantees a clean JSON 500 even in debug mode — Starlette's `ServerErrorMiddleware` would otherwise emit a raw traceback)
+
+### Security audit
+
+- `GROQ_API_KEY` / `INTERNAL_JWT_SECRET` read only via `app/core/config.py` — nothing hardcoded
+- `.env.example` lists every required variable (this milestone adds none)
+- `.env*` is git-ignored; `INTERNAL_JWT_SECRET` must be rotated before production
+
+**Manual verifications:**
+- No `X-User-Id` → 401 `{"error": "Authentication required", "detail": "X-User-Id header missing", "status_code": 401}`
+- `X-User-Id: abc` → 400 `{"error": "Validation error", "detail": "X-User-Id must be an integer", "status_code": 400}`
+- 21 rapid requests from one user → 429 `{"error": "Rate limit exceeded", "detail": "20 requests per minute allowed", "status_code": 429}`
+- Simulated internal error → 500 `{"error": "Internal server error", "detail": "Something went wrong", "status_code": 500}`, no traceback leaked
+
+**Notes:**
+- `AIServiceError` is defined but deliberately not raised today — the LLM path still degrades gracefully (200 + canned reply), which is better chatbot UX; it is the lever for truly non-recoverable upstream failure.
+- The rate-limit store is a module-level singleton; tests reset it per test via an autouse fixture so quota never leaks across tests.
+
+**Testing:** `pytest -q` → 44 passed
+
+---
+
+## Testing Strategy
+
+| Test file | Coverage | Count |
+|-----------|----------|-------|
+| `tests/test_chatbot.py` | Full chat flow (mocked LLM), memory, intent persistence, RAG, auth/rate-limit/error-handling | 15 |
+| `tests/test_intent.py` | Regex fast-path, LLM fallback, malformed JSON, unknown intent, API failure, confidence override, regressions | 19 |
+| `tests/test_retriever.py` | Relevance gate, threshold clamping, blank query, missing store, search failure | 6 |
+| `tests/test_recommender_stub.py` | Real catalog matching, plural normalization, substring-trap avoidance, empty-catalog fallback | 4 |
+| **Total** | | **44** |
+
+All LLM calls are mocked — tests run in milliseconds with zero API cost. The in-memory DB tests use real SQLite with `StaticPool`; the recommender-stub tests exercise the real catalog matching code.
+
+## Architecture Decision Record
+
+| Decision | Rationale | Trade-off |
+|----------|-----------|-----------|
+| Groq over OpenAI | Fast inference, lower cost, fits the <4s NFR | Vendor lock-in (mitigated by thin wrapper) |
+| Hand-rolled over LangChain | Full control of prompts/timeouts/fallbacks, no dependency bloat | More code to maintain (acceptable for this pipeline) |
+| Custom rate limiter over slowapi | Zero new deps, testable, Redis-swap seam | Re-invents a solved problem (acceptable at this scope) |
+| Local embeddings over hosted | Offline operation, zero per-query cost | Model quality ceiling (fine for FAQ retrieval) |
+| SQLite over PostgreSQL (dev) | Zero setup, pytest-friendly | Not for multi-worker production |
+| In-memory over Redis (dev) | Zero infrastructure | Limit becomes N×configured with N workers |
+| `to_thread` + `wait_for` over raw SDK call | Bounds the blocking Groq call, protects NFR | One thread per concurrent call (acceptable given rate limits) |
+| Regex fast-path over pure LLM intent | Zero cost + instant latency for common queries | Regex maintenance as intents evolve |
+
+## API Walkthroughs
+
+### Authentication & rate limiting
+
+```powershell
+# Missing header → 401
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"Content-Type"="application/json"} `
+  -Body '{"message":"no auth header"}'
+
+# Invalid header → 400
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"X-User-Id"="abc"; "Content-Type"="application/json"} `
+  -Body '{"message":"bad user id"}'
+
+# Rate limit → 429 after 20 requests/min from the same X-User-Id
+```
+
+### Intent routing
+
+```powershell
+# Regex fast-path → intent: recommend_product, confidence: 1.0
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} `
+  -Body '{"message":"Can you recommend a gift?"}'
+
+# Regex fast-path → intent: track_order_help, confidence: 1.0
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} `
+  -Body '{"message":"track my order"}'
+
+# Regex fast-path → intent: deal_inquiry, confidence: 1.0
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} `
+  -Body '{"message":"any sale going on?"}'
+
+# LLM path (no regex keyword) → intent varies, confidence from classifier
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} `
+  -Body '{"message":"what do you think I should get my dad"}'
+```
+
+### Recommendations, deals & RAG
+
+```powershell
+# recommend_product → recommended_products populated
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} `
+  -Body '{"message":"recommend me a phone"}'
+
+# deal_inquiry → deal populated ("Summer Sale — 20% off (code: SUMMER20)")
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} `
+  -Body '{"message":"any discounts today?"}'
+
+# product_faq → RAG-grounded answer
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} `
+  -Body '{"message":"do you ship to Pakistan?"}'
+
+# product_faq, no FAQ match → graceful no-match + human-support hand-off
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} `
+  -Body '{"message":"warranty policy for a plumbus?"}'
+```
+
+### Timeout fallback
+
+```powershell
+# Set LLM_TIMEOUT_SECONDS=0.1 in .env, restart, then:
+# → "I'm taking longer than usual. Please try again in a moment."
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
+  -Headers @{"X-User-Id"="1"; "Content-Type"="application/json"} `
+  -Body '{"message":"this will timeout"}'
+```
+
+## Gotchas & Troubleshooting
+
+**WinError 206 (path too long) on Windows** — `sentence-transformers` installs `torch`, which extracts deeply nested files. Enable the registry Long Paths setting (`HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1`) or relocate the project to a shorter path (e.g., `C:\dev\rrvdxb-chatbot`).
+
+**Terminal mojibake on em-dashes** — the `deal` field contains an em-dash (—). Some Windows terminals render it as `â` due to console code-page detection. The JSON/API response contains the correct character; the artifact is display-only.
+
+**Chroma telemetry noise** — suppressed via `Settings(anonymized_telemetry=False)` in `vector_store.py` and pinned `posthog==3.5.0`. If noise persists, check no other dependency pulled a newer `posthog`.
+
+**Rate-limit quota leaking across tests** — the `InMemoryRateLimitStore` is a module-level singleton; an autouse pytest fixture resets it before every test (`rate_limit_store.reset()`) so quota never leaks.
+
+**First-run model download** — `all-MiniLM-L6-v2` (~90MB) downloads from HuggingFace on first build. To pre-cache for an offline/CI environment:
+
+```bash
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+```
+
+Then copy `~/.cache/torch/sentence_transformers/` into the deployment image.
+
+**Missing `chroma.sqlite3` on a fresh clone** — the vector store is git-ignored; run `python scripts/build_vector_store.py` after cloning. The app won't crash without it (RAG degrades to `[]`), but FAQ answers won't be grounded until the index exists.
+
+## What's Next
+
+- [ ] Streaming response support (the endpoint returns a single JSON body today)
+- [ ] Real JWT authentication — swap the `X-User-Id` stub for `Authorization: Bearer` when the Users/Auth API is ready (`dependencies.py` is the only seam)
+- [ ] Redis-backed rate-limit store (shared counter) for multi-worker production
+- [ ] Dockerize (multi-stage image; workers share Redis + PostgreSQL)
+- [ ] Load testing for the <4s latency NFR (locust / k6)
+- [ ] Performance budget telemetry (metrics on `step_times` in `chatbot_service`)
+
+## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -183,9 +337,8 @@
 | `GROQ_API_KEY` | Yes | From console.groq.com |
 | `LLM_PROVIDER` | Yes | `groq` (default) |
 | `LLM_MODEL` | Yes | `llama-3.1-8b-instant` (default) |
-| `INTERNAL_JWT_SECRET` | Yes | Min 32 chars, used for service-to-service tokens |
-| `DEBUG` | No | `True` or `False` (default: True) |
-| `LLM_TIMEOUT_SECONDS` | No | 3.0 — hard cap (s) on each LLM call, protects the <4s NFR |
+| `INTERNAL_JWT_SECRET` | Yes | Min 32 chars, service-to-service JWT signing |
+| `DEBUG` | No | `True` or `False` (default: `True`) |
+| `LLM_TIMEOUT_SECONDS` | No | `3.0` — hard cap (s) on each LLM call, protects the <4s NFR |
 
-> Query routing and RAG use local, offline embeddings — no additional API key
-> required. Day 7 added exactly one env var: `LLM_TIMEOUT_SECONDS`.
+Query routing and RAG use local, offline embeddings — no additional API key required.
