@@ -7,6 +7,16 @@ Day 8 adds auth + rate-limiting + error-handling coverage:
   - Per-user rate limit exceeded -> 429 with the canonical error body
   - Unhandled internal error     -> 500 generic body, no traceback leaked
 
+Day 9 adds:
+  - Cross-user memory isolation (no history leakage between users)
+  - track_order_help branch (ORDER TRACKING GUIDANCE prompt, history kept)
+  - general_chat branch (standard prompt + catalog context, made explicit)
+  - Framework-level error shape: 404 and 405 via http_exception_handler
+  - Malformed request body -> canonical 400 (validation_error_handler)
+  - Hallucination guard: an ungrounded price figure in the LLM reply is
+    replaced with a safety message (and only the safe text is persisted),
+    while a figure that IS grounded in the injected context is kept.
+
 Everything that existed before (memory, RAG, recommendations, deals,
 timeout/fallback, intent persistence) still passes unchanged.
 """
@@ -186,7 +196,256 @@ def test_unhandled_error_returns_500_standardized_body():
 
 
 # ==========================================================================
-# Existing tests (unchanged behavior — all 41 still pass)
+# Day 9 — cross-user memory isolation, remaining intent branches,
+#         framework-level error shape, validation handler, hallucination guard
+# ==========================================================================
+
+def test_memory_does_not_leak_between_users():
+    """
+    Cross-pollution guard: a different user must NEVER see prior turns,
+    while the owning user still sees their own on the next turn.
+    """
+    user_a, user_b = 500, 501
+    a_message = "my secret gift plan for my wife"
+    a_reply = "Great - tell me the occasion and your budget!"
+
+    with patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=a_reply,
+    ) as mock_llm, _mock_intent("recommend_product"):
+        first = client.post(
+            "/api/v1/ai/chat",
+            json={"message": a_message, "user_id": user_a},
+            headers={"X-User-Id": str(user_a)},
+        )
+        assert first.status_code == 200
+        assert _extract_history_arg(mock_llm.call_args) == ""
+
+    b_reply = "Hi! I'm Sara - how can I help you shop today?"
+    with patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=b_reply,
+    ) as mock_llm_b, _mock_intent("general_chat"):
+        second = client.post(
+            "/api/v1/ai/chat",
+            json={"message": "hello", "user_id": user_b},
+            headers={"X-User-Id": str(user_b)},
+        )
+        assert second.status_code == 200
+        history_b = _extract_history_arg(mock_llm_b.call_args)
+        assert a_message not in history_b
+        assert a_reply not in history_b
+
+    a_reply2 = "Here are gift ideas under 500 AED."
+    with patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=a_reply2,
+    ) as mock_llm_a, _mock_intent("recommend_product"):
+        third = client.post(
+            "/api/v1/ai/chat",
+            json={"message": "under 500 AED", "user_id": user_a},
+            headers={"X-User-Id": str(user_a)},
+        )
+        assert third.status_code == 200
+        history_a = _extract_history_arg(mock_llm_a.call_args)
+        assert a_message in history_a
+
+    db = TestingSessionLocal()
+    rows_a = db.query(ChatHistory).filter(ChatHistory.user_id == user_a).count()
+    rows_b = db.query(ChatHistory).filter(ChatHistory.user_id == user_b).count()
+    db.close()
+    assert rows_a == 2
+    assert rows_b == 1
+
+
+def test_track_order_help_uses_tracking_guidance_and_keeps_history():
+    """
+    track_order_help must ground the reply in the ORDER TRACKING GUIDANCE
+    block (no invented tracking info), and history must still be appended.
+    """
+    user_id = 600
+    first_reply = "I'd be happy to help you track your order!"
+    with patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=first_reply,
+    ) as mock_llm, _mock_intent("track_order_help"):
+        r1 = client.post(
+            "/api/v1/ai/chat",
+            json={"message": "track my order", "user_id": user_id},
+            headers={"X-User-Id": str(user_id)},
+        )
+        assert r1.status_code == 200
+        assert r1.json()["intent"] == "track_order_help"
+        kwargs1 = mock_llm.call_args.kwargs
+        assert "ORDER TRACKING GUIDANCE" in kwargs1["system_prompt"]
+        assert "NEVER invent a tracking number" in kwargs1["system_prompt"]
+        assert kwargs1.get("system_prompt_override") is None
+        assert _extract_history_arg(mock_llm.call_args) == ""
+
+    second_reply = "Your order is with our courier - details are in your email."
+    with patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=second_reply,
+    ) as mock_llm2, _mock_intent("track_order_help"):
+        r2 = client.post(
+            "/api/v1/ai/chat",
+            json={"message": "where is it now?", "user_id": user_id},
+            headers={"X-User-Id": str(user_id)},
+        )
+        assert r2.status_code == 200
+        history2 = _extract_history_arg(mock_llm2.call_args)
+        assert "track my order" in history2
+        assert first_reply in history2
+        assert "ORDER TRACKING GUIDANCE" in mock_llm2.call_args.kwargs["system_prompt"]
+
+
+def test_general_chat_uses_standard_prompt_with_catalog():
+    """
+    general_chat explicit: base persona prompt (STRICT GUARDRAILS), no RAG
+    override, no tracking guidance, and the product catalog injected.
+    """
+    mock_reply = "Hi there! I'm Sara - how can I help you shop today?"
+    with patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=mock_reply,
+    ) as mock_llm, _mock_intent("general_chat"):
+        response = client.post(
+            "/api/v1/ai/chat",
+            json={"message": "hello", "user_id": 700},
+            headers={"X-User-Id": "700"},
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["intent"] == "general_chat"
+    assert data["reply"] == mock_reply
+    kwargs = mock_llm.call_args.kwargs
+    assert kwargs.get("system_prompt_override") is None
+    assert "STRICT GUARDRAILS" in kwargs["system_prompt"]
+    assert "FAQ CONTEXT:" not in kwargs["system_prompt"]
+    assert "ORDER TRACKING GUIDANCE" not in kwargs["system_prompt"]
+    assert kwargs["product_context"] != ""
+
+
+def test_unknown_route_returns_canonical_404_body():
+    """
+    http_exception_handler (untested until now): a framework-level 404 must
+    return the SAME {"error", "detail", "status_code"} shape as our own
+    typed errors.
+    """
+    response = client.get("/api/v1/does-not-exist")
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": "Not Found",
+        "detail": "Not Found",
+        "status_code": 404,
+    }
+
+
+def test_wrong_method_returns_canonical_405_body():
+    """
+    http_exception_handler: a 405 (GET on the POST-only chat route) must also
+    match the canonical error body - consistency even at the framework edge.
+    """
+    response = client.get("/api/v1/ai/chat")
+    assert response.status_code == 405
+    assert response.json() == {
+        "error": "Method Not Allowed",
+        "detail": "Method Not Allowed",
+        "status_code": 405,
+    }
+
+
+def test_malformed_request_body_returns_canonical_400():
+    """
+    validation_error_handler (untested until now): FastAPI's 422 validation
+    errors surface as our canonical 400 body. An empty message violates
+    ChatRequest.min_length=1.
+    """
+    response = client.post(
+        "/api/v1/ai/chat",
+        json={"message": ""},
+        headers={"X-User-Id": "1"},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"] == "Validation error"
+    assert body["status_code"] == 400
+    assert len(body["detail"]) > 0
+
+
+def test_hallucinated_price_in_reply_is_replaced():
+    """
+    The post-generation guard must stop an invented price figure from ever
+    reaching the customer: the reply is replaced with a safety message, and
+    ONLY the safe text is persisted to chat_history.
+
+    The fake RAG chunks contain no "6,499" figure, the catalog is NOT
+    injected on the grounded FAQ path, and the user's message has no price —
+    so the figure the (mocked) LLM quoted is provably ungrounded. Note the
+    "AED 6,499" currency-first spelling, which the guard's pattern handles.
+    """
+    user_id = 800
+    payload = {"message": "how much is the iphone 14 pro max?", "user_id": user_id}
+    hallucinated_reply = (
+        "The iPhone 14 Pro Max is available at a great price of AED 6,499."
+    )
+    with patch(
+        "app.services.chatbot_service.retrieve_faq_context",
+        return_value=_FAKE_FAQ_CHUNKS,
+    ), patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=hallucinated_reply,
+    ), _mock_intent("product_faq"):
+        response = client.post(
+            "/api/v1/ai/chat",
+            json=payload,
+            headers={"X-User-Id": str(user_id)},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["intent"] == "product_faq"
+    assert "6,499" not in data["reply"]
+    assert data["reply"] == (
+        "Let me double-check that exact figure for you — I don't want to quote "
+        "anything that isn't accurate. One moment, please."
+    )
+
+    db = TestingSessionLocal()
+    row = db.query(ChatHistory).filter(ChatHistory.user_id == user_id).one()
+    db.close()
+    assert row.ai_response == data["reply"]
+
+
+def test_grounded_price_from_faq_context_is_kept():
+    """
+    False-positive check: a figure that IS present in the injected context
+    (the RAG FAQ chunks — free shipping over 489 AED) passes the guard
+    untouched. The guard must not censor grounded figures.
+    """
+    payload = {"message": "is shipping free?", "user_id": 801}
+    grounded_reply = "Yes — shipping is free on orders over 489 AED."
+    with patch(
+        "app.services.chatbot_service.retrieve_faq_context",
+        return_value=_FAKE_FAQ_CHUNKS,
+    ), patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value=grounded_reply,
+    ), _mock_intent("product_faq"):
+        response = client.post(
+            "/api/v1/ai/chat",
+            json=payload,
+            headers={"X-User-Id": "801"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["reply"] == grounded_reply
+    assert "489 AED" in data["reply"]
+
+
+# ==========================================================================
+# Existing tests (pre-Day-9 behavior — all still pass)
 # ==========================================================================
 
 def test_chat_endpoint_responds_200():
@@ -254,9 +513,15 @@ def test_conversation_memory_persists_across_turns():
         history_arg_1 = _extract_history_arg(mock_llm.call_args)
         assert history_arg_1 == ""
 
+    # NOTE: the mock quotes THREE figures — 500 AED (the customer's own
+    # budget, from the message) plus 399 AED and 450 AED, which are the real
+    # catalog prices of the Men's Classic Polo Shirt and Harak Perfume Oud
+    # Edition. All three are grounded, so the Day 9 guard keeps the reply
+    # intact while still proving memory works.
     second_mock_reply = (
         "Great! Here are some gift ideas under 500 AED: "
-        "Lacoste L.12.12 Pour Lui (299 AED) and Adidas Ultraboost (450 AED)."
+        "the Men's Classic Polo Shirt (399 AED) and "
+        "Harak Perfume Oud Edition (450 AED)."
     )
     with patch(
         "app.services.chatbot_service.send_chat_message",

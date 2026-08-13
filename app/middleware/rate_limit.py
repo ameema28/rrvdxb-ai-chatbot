@@ -30,9 +30,8 @@ from collections import deque
 from typing import Deque, Dict
 
 from fastapi import Depends
-from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user_id, get_db
+from app.core.dependencies import get_current_user_id
 from app.middleware.error_handler import RateLimitExceeded
 
 
@@ -43,7 +42,15 @@ RATE_LIMIT_WINDOW_SECONDS: float = 60.0  # sliding-window length for  1  minute
 
 
 class RateLimitResult:
-    """Immutable result of a rate-limit check."""
+    """
+    Immutable result of a rate-limit check.
+
+    Attributes:
+        allowed: Whether the request may proceed.
+        remaining: How many requests remain in the current window.
+        limit: The configured per-window budget.
+        window_seconds: The sliding-window length the limit applies to.
+    """
 
     __slots__ = ("allowed", "remaining", "limit", "window_seconds")
 
@@ -100,6 +107,15 @@ class InMemoryRateLimitStore(RateLimitStore):
         limit: int,
         window_seconds: float,
     ) -> RateLimitResult:
+        """
+        Record one in-memory request for `key` under the lock.
+
+        Slides the window (drops expired timestamps), admits the request if
+        the budget remains, and reclaims the key when a denied bucket drains.
+
+        Returns:
+            A RateLimitResult describing the decision and remaining budget.
+        """
         now = time.monotonic()
         cutoff = now - window_seconds
         with self._lock:

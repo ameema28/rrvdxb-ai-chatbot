@@ -12,6 +12,9 @@ Pipeline:
   Step 2 — LLM classification: only when regex misses. Uses the EXISTING
            Groq client via send_chat_message() — no second API client.
   Step 3 — Hardened parsing + graceful degradation on any failure.
+
+Day 9 — plural forms added to the track/deal patterns ("discounts", "deals",
+"offers", "tracking"...) so common phrasings keep the zero-cost fast-path.
 """
 
 import json
@@ -69,6 +72,9 @@ class IntentResult(BaseModel):
 # --------------------------------------------------------------------------
 # Order matters: the FIRST pattern that matches wins (mirrors the spec).
 # Patterns are compiled once at import time and searched case-insensitively.
+# `s?` pluralization: "discounts"/"deals"/"offers"/"sales"/"coupons"/"promos"
+# and "tracking"/"tracks" must hit the fast-path exactly like the singulars —
+# otherwise every plural phrasing burns an LLM classification call.
 # --------------------------------------------------------------------------
 
 _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
@@ -84,14 +90,14 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
     (
         "track_order_help",
         re.compile(
-            r"\btrack\b|order.*status|where.*order|shipping.*status",
+            r"\btrack(?:ing|s)?\b|order.*status|where.*order|shipping.*status",
             re.IGNORECASE,
         ),
     ),
     (
         "deal_inquiry",
         re.compile(
-            r"\bdeal\b|\bdiscount\b|\bsale\b|\boffer\b|\bcoupon\b|\bpromo\b",
+            r"\bdeals?\b|\bdiscounts?\b|\bsales?\b|\boffers?\b|\bcoupons?\b|\bpromos?\b",
             re.IGNORECASE,
         ),
     ),

@@ -6,9 +6,10 @@ order support, and personalized recommendations.
 
 ## What This Does
 
-- **Hybrid Intent Classification** — Regex fast-path (zero LLM cost) + LLM fallback for ambiguous queries; 5 intents routed to specialized handlers
+- **Hybrid Intent Classification** — Regex fast-path (zero LLM cost) + LLM fallback for ambiguous queries; 5 intents routed to specialized handlers; plural forms ("discounts", "deals", "tracking"...) keep the fast-path
 - **RAG-Grounded FAQ Answers** — Local sentence-transformer embeddings (`all-MiniLM-L6-v2`) + ChromaDB retrieval with a tuned 0.6 cosine-similarity threshold; no OpenAI key required
 - **DB-Backed Conversation Memory** — SQLAlchemy turn history with a sliding N=5 context window; anonymous fallback to `user_id=0`
+- **Hallucination Guard** — every price figure in the LLM reply is mechanically validated against the injected context (FAQ chunks, catalog, recommendations, deal, user message, history); invented figures are replaced with a safety message before persistence
 - **Product Recommendations & Deal Lookup** — Stub services with keyword-matching against the live catalog; drop-in ready for the real recommendation and deals microservices
 - **Centralized Error Handling** — One canonical JSON shape across every error path; stack traces and secrets never leak to the client
 - **Per-User Rate Limiting** — 20 requests/minute sliding window via an in-memory store with a clean ABC seam for Redis swap-in
@@ -68,6 +69,7 @@ slowapi introduces decorator magic and extra dependencies. The `RateLimitStore` 
 | Deal finder stub (real service pending) | done |
 | Auth stub (`X-User-Id`) + per-user rate limiting | done |
 | Centralized error handling | done |
+| Hallucination guard (ungrounded prices blocked) | done |
 | Chatbot response < 4 s — timeout guard | done |
 | Streaming responses | pending |
 | Real JWT authentication (`Authorization: Bearer`) | pending |
@@ -89,7 +91,7 @@ slowapi introduces decorator magic and extra dependencies. The `RateLimitStore` 
 | LLM | Groq (Chat Completions API) |
 | Validation | Pydantic v2 |
 | Rate Limiting | In-memory sliding window (Redis-ready via store interface) |
-| Testing | pytest (44 tests, mocked LLM, no API costs in CI) |
+| Testing | pytest (63 tests, mocked LLM, no API costs in CI) |
 
 ## Project Structure
 
@@ -115,7 +117,7 @@ rrvdxb-chatbot/
 │   │       └── endpoints/
 │   │           └── chatbot.py  # POST /api/v1/ai/chat (Private, rate-limited)
 │   ├── services/            # Business logic layer
-│   │   ├── chatbot_service.py  # LLM orchestration + intent routing + DB persistence
+│   │   ├── chatbot_service.py  # LLM orchestration + intent routing + hallucination guard + DB persistence
 │   │   ├── recommender_stub.py # Product recommendation stub
 │   │   └── deal_finder_stub.py # Deal lookup stub
 │   ├── ai/chatbot/          # LLM prompts, client, memory, intent, RAG
@@ -130,10 +132,11 @@ rrvdxb-chatbot/
 ├── scripts/
 │   └── build_vector_store.py  # Build/persist the FAQ Chroma index (run once)
 ├── tests/
-│   ├── test_chatbot.py      # Chat flow, memory, RAG, auth/rate-limit/error-handling (15)
-│   ├── test_intent.py       # Intent recognition: regex + LLM fallback (19)
+│   ├── test_chatbot.py      # Chat flow, memory, RAG, auth/rate-limit/errors, hallucination guard (23)
+│   ├── test_intent.py       # Intent recognition: regex + LLM fallback + plural forms (21)
 │   ├── test_retriever.py    # Retriever unit tests, mocked search_faqs (6)
-│   └── test_recommender_stub.py  # Recommender stub, real catalog matching (4)
+│   ├── test_recommender_stub.py  # Recommender stub, real catalog matching (4)
+│   └── test_schemas.py      # Schema validation: ChatRequest edges + ChatResponse round-trips (9)
 ├── docs/
 │   └── chatbot.md           # Engineering log + architecture decision record
 ├── requirements.txt
@@ -227,7 +230,7 @@ Every client-facing error uses one JSON shape — no stack traces, no secrets:
 pytest -q
 ```
 
-Expected: `44 passed`. All LLM calls are mocked — fast, deterministic, zero API cost.
+Expected: `63 passed`. All LLM calls are mocked — fast, deterministic, zero API cost.
 
 ## Environment Variables
 
@@ -236,6 +239,7 @@ Expected: `44 passed`. All LLM calls are mocked — fast, deterministic, zero AP
 | `DATABASE_URL` | Yes | `sqlite:///./rrvdxb.db` | SQLAlchemy DB URI |
 | `LLM_PROVIDER` | Yes | `groq` | Currently only groq is wired |
 | `GROQ_API_KEY` | Yes | — | Groq API key |
+| `OPENAI_API_KEY` | No | — | Only used if `LLM_PROVIDER=openai` |
 | `LLM_MODEL` | Yes | `llama-3.1-8b-instant` | Model name for Groq |
 | `INTERNAL_JWT_SECRET` | Yes | — | Min 32 chars for JWT signing |
 | `DEBUG` | No | `True` | FastAPI debug mode |

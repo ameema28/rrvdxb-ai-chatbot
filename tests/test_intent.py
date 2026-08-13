@@ -7,6 +7,8 @@ Covers:
   - JSON parsing robustness (code fences, malformed JSON, bad intents).
   - Confidence threshold override and clamping.
   - Graceful degradation when the Groq API fails.
+  - Day 9: plural forms ("discounts", "deals", "offers", "tracking"...)
+    must keep hitting the regex fast-path (no unnecessary LLM calls).
 
 All LLM calls are mocked — no real API, no network, deterministic.
 """
@@ -203,3 +205,40 @@ def test_shipping_status_still_routes_to_track_order_help():
     result = classify_intent("What is the shipping status of my order?")
     assert result.intent == "track_order_help"
     assert result.confidence == 1.0
+
+
+# --------------------------------------------------------------------------
+# Day 9 — plural / inflected forms keep the regex fast-path (regression)
+# --------------------------------------------------------------------------
+# The regex layer must recognize "discounts", "deals", "offers", "sales",
+# "coupons", "promos" and "tracking"/"tracks" exactly like the singulars.
+# Before the Day 9 fix these fell through to the LLM classifier, burning a
+# paid API call (and adding latency) on every plural phrasing.
+
+def test_regex_deal_plural_forms_hit_fast_path():
+    with patch("app.ai.chatbot.intent.send_chat_message") as mock_llm:
+        for message in (
+            "any discounts today?",
+            "do you have any deals running?",
+            "what offers do you have?",
+            "any sales this week?",
+            "do you have coupons?",
+            "any promos for new customers?",
+        ):
+            result = classify_intent(message)
+            assert result.intent == "deal_inquiry", message
+            assert result.confidence == 1.0, message
+        mock_llm.assert_not_called()
+
+
+def test_regex_track_inflected_forms_hit_fast_path():
+    with patch("app.ai.chatbot.intent.send_chat_message") as mock_llm:
+        for message in (
+            "tracking my order please",
+            "can you track my orders?",
+            "where is my order?",
+        ):
+            result = classify_intent(message)
+            assert result.intent == "track_order_help", message
+            assert result.confidence == 1.0, message
+        mock_llm.assert_not_called()
