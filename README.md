@@ -12,7 +12,7 @@ order support, and personalized recommendations.
 - **Hallucination Guard** — every price figure in the LLM reply is mechanically validated against the injected context (FAQ chunks, catalog, recommendations, deal, user message, history); invented figures are replaced with a safety message before persistence
 - **Product Recommendations & Deal Lookup** — Stub services with keyword-matching against the live catalog; drop-in ready for the real recommendation and deals microservices
 - **Centralized Error Handling** — One canonical JSON shape across every error path; stack traces and secrets never leak to the client
-- **Per-User Rate Limiting** — 20 requests/minute sliding window via an in-memory store with a clean ABC seam for Redis swap-in
+- **Per-User Rate Limiting** — Sliding-window budget (`RATE_LIMIT_PER_MINUTE`, default 20) via an in-memory store with a clean ABC seam for Redis swap-in
 
 ## Feature Specification → Delivery
 
@@ -56,6 +56,9 @@ slowapi introduces decorator magic and extra dependencies. The `RateLimitStore` 
 **Why local embeddings instead of a hosted model?**
 `sentence-transformers` runs fully offline after the initial ~90MB model download — no external API dependency, no per-query cost, and RAG stays functional even if the LLM provider is down.
 
+**Why a single-stage container with the vector store baked in?**
+The image builds the FAQ index (model download + Chroma persistence) at `docker build` time, so containers start with RAG grounded from second zero and need no internet at runtime. Single-stage keeps the deliverable simple; multi-stage buys little when the app and its data live in one image.
+
 ## Project Status
 
 | Capability | Status |
@@ -71,10 +74,11 @@ slowapi introduces decorator magic and extra dependencies. The `RateLimitStore` 
 | Centralized error handling | done |
 | Hallucination guard (ungrounded prices blocked) | done |
 | Chatbot response < 4 s — timeout guard | done |
+| Container image (single-stage, `$PORT`-aware, Render-ready) | done |
+| GitHub Actions CI (63 tests, mocked — zero secrets) | done |
 | Streaming responses | pending |
 | Real JWT authentication (`Authorization: Bearer`) | pending |
 | Redis-backed rate limit store | pending |
-| Docker + multi-stage deployment | pending |
 | Load testing (<4s NFR validation) | pending |
 
 > See [`docs/chatbot.md`](docs/chatbot.md) for the engineering log, architecture decision record, and verification walkthroughs.
@@ -91,6 +95,8 @@ slowapi introduces decorator magic and extra dependencies. The `RateLimitStore` 
 | LLM | Groq (Chat Completions API) |
 | Validation | Pydantic v2 |
 | Rate Limiting | In-memory sliding window (Redis-ready via store interface) |
+| Containers | Docker — `python:3.11-slim` single-stage image |
+| CI | GitHub Actions (push + pull_request, Python 3.11) |
 | Testing | pytest (63 tests, mocked LLM, no API costs in CI) |
 
 ## Project Structure
@@ -139,6 +145,10 @@ rrvdxb-chatbot/
 │   └── test_schemas.py      # Schema validation: ChatRequest edges + ChatResponse round-trips (9)
 ├── docs/
 │   └── chatbot.md           # Engineering log + architecture decision record
+├── .github/workflows/
+│   └── ci.yml               # GitHub Actions: install deps + pytest on every push/PR
+├── Dockerfile               # Single-stage image; vector store + model baked in at build
+├── .dockerignore
 ├── requirements.txt
 ├── pytest.ini
 ├── .env.example
@@ -173,6 +183,7 @@ GROQ_API_KEY=gsk-...           # get from console.groq.com
 LLM_PROVIDER=groq
 LLM_MODEL=llama-3.1-8b-instant
 LLM_TIMEOUT_SECONDS=3.0        # hard LLM call timeout (s), guards the <4s NFR
+RATE_LIMIT_PER_MINUTE=20       # per-user chat budget (sliding window per minute)
 INTERNAL_JWT_SECRET=...        # min 32 chars
 ```
 
@@ -208,6 +219,19 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/v1/ai/chat" -Method POST `
 
 The response includes `intent`, `confidence`, and (for relevant intents) `recommended_products` or `deal`.
 
+### 6. Run with Docker (alternative)
+
+```bash
+docker build -t rrvdxb-chatbot .
+docker run -p 8000:8000 rrvdxb-chatbot
+# Any $PORT-based platform (Render, etc.): set the port via env at runtime
+docker run -e PORT=9000 -p 9000:9000 rrvdxb-chatbot
+```
+
+The vector store (model + `chroma_db/`) is baked in at **build** time — no
+download at container start. Pass secrets at runtime with `-e` or `--env-file` —
+never bake a `.env` into an image.
+
 ## Centralized Error Responses
 
 Every client-facing error uses one JSON shape — no stack traces, no secrets:
@@ -231,6 +255,9 @@ pytest -q
 ```
 
 Expected: `63 passed`. All LLM calls are mocked — fast, deterministic, zero API cost.
+The same command runs in GitHub Actions on every push/PR (`.github/workflows/ci.yml`);
+no env vars, API keys, network access, or vector store are needed — the whole suite is
+repo-self-contained.
 
 ## Environment Variables
 
@@ -244,6 +271,7 @@ Expected: `63 passed`. All LLM calls are mocked — fast, deterministic, zero AP
 | `INTERNAL_JWT_SECRET` | Yes | — | Min 32 chars for JWT signing |
 | `DEBUG` | No | `True` | FastAPI debug mode |
 | `LLM_TIMEOUT_SECONDS` | No | `3.0` | Hard LLM call timeout (s) — protects the <4s NFR |
+| `RATE_LIMIT_PER_MINUTE` | No | `20` | Per-user chat budget per minute (sliding window) |
 
 RAG embeddings run entirely offline — no additional API key required.
 

@@ -9,8 +9,8 @@ pydantic-settings==2.1.0
 # Database
 sqlalchemy==2.0.25
 
-# AI / LLM (Day 1: direct API calls; LangChain added later)
-groq>=0.4.0
+# AI / LLM (Day 1: direct API calls; hand-rolled orchestration, no LangChain)
+groq==1.6.0
 openai==1.10.0
 
 # Testing

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
         llm_model: Model name to use with the chosen provider.
         internal_jwt_secret: Used for signing/verifying internal service tokens.
         debug: Enables FastAPI debug mode and verbose logging.
+        rate_limit_per_minute: Per-user chat request budget (sliding window).
     """
 
     # --- App metadata ---
@@ -39,8 +40,8 @@ class Settings(BaseSettings):
         description="LLM provider: 'openai' or 'groq'",
     )
     llm_model: str = Field(
-    default="llama-3.1-8b-instant",
-    description="Model name for the chosen provider",
+        default="llama-3.1-8b-instant",
+        description="Model name for the chosen provider",
     )
 
     # --- API Keys (at least one must be set depending on provider) ---
@@ -66,6 +67,12 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(
         default=3.0,
         description="Hard ceiling for the Groq call (keeps the chat under the 4s NFR)",
+    )
+
+    # --- Rate limiting (Day 10: config knob, was a code constant) ---
+    rate_limit_per_minute: int = Field(
+        default=20,
+        description="Per-user chat request budget per minute (sliding window)",
     )
 
     # Pydantic v2: use SettingsConfigDict instead of nested class Config

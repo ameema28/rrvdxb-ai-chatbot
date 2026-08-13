@@ -1,0 +1,15 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.env
+.env.*
+rrvdxb.db
+*.db
+app/ai/chatbot/rag/chroma_db
+docs
+tests
+.gitignore
+pytest.ini

@@ -31,14 +31,17 @@ from typing import Deque, Dict
 
 from fastapi import Depends
 
+from app.core.config import settings
 from app.core.dependencies import get_current_user_id
 from app.middleware.error_handler import RateLimitExceeded
 
 
-# Tuning knobs — code constants for now (Day 8 adds no env vars).
-# If these grow, move them into app/core/config.py.
-RATE_LIMIT_LIMIT: int = 20  # requests per user per window
-RATE_LIMIT_WINDOW_SECONDS: float = 60.0  # sliding-window length for  1  minute
+# Tuning knobs — config-driven since Day 10 (RATE_LIMIT_PER_MINUTE in .env).
+# The module-level names are kept so tests and the 429 detail message read one
+# single source of truth. Values are read ONCE at import time — changing them
+# requires a restart (same as any env-var configuration).
+RATE_LIMIT_LIMIT: int = settings.rate_limit_per_minute  # requests per user per window
+RATE_LIMIT_WINDOW_SECONDS: float = 60.0  # sliding-window length for 1 minute
 
 
 class RateLimitResult:
