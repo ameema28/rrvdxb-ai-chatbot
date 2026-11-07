@@ -82,9 +82,21 @@ class Settings(BaseSettings):
     debug: bool = Field(default=True, description="FastAPI debug mode")
 
     # --- Performance / NFR (Day 7) ---
+    # One total budget per chat request; each blocking step also has its own
+    # cap and gets min(cap, time left in the budget).
+    request_budget_seconds: float = Field(
+        default=4.0, gt=0, description="Total time budget for one chat request"
+    )
+    intent_timeout_seconds: float = Field(
+        default=1.0, gt=0, description="Cap for intent classification (LLM fallback)"
+    )
+    retrieval_timeout_seconds: float = Field(
+        default=1.0, gt=0, description="Cap for FAQ retrieval (embedding + ChromaDB)"
+    )
     llm_timeout_seconds: float = Field(
         default=3.0,
-        description="Hard ceiling for the Groq call (keeps the chat under the 4s NFR)",
+        gt=0,
+        description="Cap for the reply LLM call (also the Groq client timeout)",
     )
 
     # --- Rate limiting (Day 10: config knob, was a code constant) ---

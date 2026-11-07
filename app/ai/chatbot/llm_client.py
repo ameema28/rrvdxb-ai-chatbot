@@ -36,7 +36,14 @@ def _get_groq_client() -> Groq:
             raise RuntimeError(
                 "GROQ_API_KEY is not set. Please configure it in your .env file."
             )
-        _groq_client = Groq(api_key=settings.groq_api_key)
+        # timeout + max_retries=0: a call abandoned by the request budget
+        # (asyncio.wait_for cannot kill its worker thread) still ends within
+        # llm_timeout_seconds instead of retrying in the background.
+        _groq_client = Groq(
+            api_key=settings.groq_api_key,
+            timeout=settings.llm_timeout_seconds,
+            max_retries=0,
+        )
         logger.info("Groq client initialized (model: %s)", settings.llm_model)
     return _groq_client
 

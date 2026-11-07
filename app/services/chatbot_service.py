@@ -7,7 +7,8 @@ This layer sits between the API route and the AI client. It handles:
   - Loading recent conversation history from the database (Day 3)
   - Retrieving FAQ context for product_faq intents (Day 6 RAG)
   - Recommendations (recommend_product) + deals (deal_inquiry) via stubs (Day 7)
-  - Calling the Groq LLM with a hard timeout, wrapped in a worker thread (Day 7)
+  - Bounding intent classification, FAQ retrieval and the Groq reply call
+    inside one total request budget, each in a worker thread (Phase 2)
   - Persisting the new turn (with intent) to chat_history
   - Returning a structured ChatResponse
   - Post-generation hallucination guard: any currency figure in the LLM reply
@@ -25,7 +26,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.ai.chatbot.intent import classify_intent
+from app.ai.chatbot.intent import IntentResult, classify_intent
 from app.ai.chatbot.llm_client import send_chat_message
 from app.ai.chatbot.memory import (
     format_history_for_prompt,
@@ -151,6 +152,18 @@ def _validate_prices_against_grounding(
     return reply, set()
 
 
+async def _run_bounded(func: Any, timeout: float) -> Any:
+    """
+    Run a blocking callable in a worker thread, bounded by `timeout` seconds.
+
+    Raises asyncio.TimeoutError at once (without starting the call) when the
+    request budget is already spent.
+    """
+    if timeout <= 0:
+        raise asyncio.TimeoutError
+    return await asyncio.wait_for(asyncio.to_thread(func), timeout=timeout)
+
+
 def _load_json(filename: str) -> Any:
     """Helper to load JSON mock data."""
     path = os.path.join(_MOCK_DIR, filename)
@@ -257,17 +270,34 @@ async def handle_chat_message(
     - 6 Persist the turn (fallback turns persist as general_chat).
     - 7 Return ChatResponse (reply, recommended_products, deal, intent).
     """
-    # Step 0 — timing observability for the <4s NFR budget.
+    # Step 0 — one total time budget for the whole request. Every blocking
+    # step (intent LLM, retrieval, reply LLM) runs in a worker thread under
+    # min(its own cap, time left before the deadline).
     step_times: List[Tuple[str, float]] = []
     step_started = time.perf_counter()
+    deadline = time.monotonic() + settings.request_budget_seconds
+
+    def _remaining() -> float:
+        return deadline - time.monotonic()
 
     # user_id is the verified token subject (the route requires auth).
     effective_user_id = user_id
 
     # ------------------------------------------------------------------
-    # 1. Classify intent FIRST — decide the path before we build anything
+    # 1. Classify intent FIRST — decide the path before we build anything.
+    #    On timeout: general_chat with confidence 0.0.
     # ------------------------------------------------------------------
-    intent_result = classify_intent(message)
+    intent_timeout = min(settings.intent_timeout_seconds, _remaining())
+    try:
+        intent_result = await _run_bounded(
+            functools.partial(classify_intent, message), intent_timeout
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Intent classification exceeded %.2fs — using general_chat",
+            intent_timeout,
+        )
+        intent_result = IntentResult(intent="general_chat", confidence=0.0, entities={})
     intent = intent_result.intent
     logger.debug(
         "Classified intent=%s (confidence=%.2f) for message=%r",
@@ -307,7 +337,18 @@ async def handle_chat_message(
     route_started = time.perf_counter()
     if intent == "product_faq":
         # 4a. Day 6 — RAG path: pull trustworthy FAQ chunks for this question.
-        faq_chunks = retrieve_faq_context(message)
+        #     Bounded like the LLM calls: on timeout, the no-match path.
+        retrieval_timeout = min(settings.retrieval_timeout_seconds, _remaining())
+        try:
+            faq_chunks = await _run_bounded(
+                functools.partial(retrieve_faq_context, message), retrieval_timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "RAG: retrieval exceeded %.2fs — treating as no FAQ match",
+                retrieval_timeout,
+            )
+            faq_chunks = []
         if faq_chunks:
             logger.info(
                 "RAG: retrieved %d FAQ chunk(s) for message=%r",
@@ -379,31 +420,29 @@ async def handle_chat_message(
 
     # ------------------------------------------------------------------
     # 5. Call the Groq LLM.
-    #     send_chat_message() is BLOCKING, so it must go to a worker thread
-    #     (asyncio.to_thread) to become interruptible, then be bounded by
-    #     asyncio.wait_for(...). functools.partial binds the keyword args.
+    #     send_chat_message() is BLOCKING, so it goes to a worker thread and
+    #     is bounded by min(llm_timeout_seconds, time left in the budget).
+    #     functools.partial binds the keyword args.
     # ------------------------------------------------------------------
     llm_started = time.perf_counter()
-    str_timeout = settings.llm_timeout_seconds
+    reply_timeout = min(settings.llm_timeout_seconds, _remaining())
     try:
-        reply = await asyncio.wait_for(
-            asyncio.to_thread(
-                functools.partial(
-                    send_chat_message,
-                    system_prompt=system_prompt,
-                    user_message=message,
-                    product_context=context,
-                    history=history_string,
-                    system_prompt_override=system_prompt_override,
-                )
+        reply = await _run_bounded(
+            functools.partial(
+                send_chat_message,
+                system_prompt=system_prompt,
+                user_message=message,
+                product_context=context,
+                history=history_string,
+                system_prompt_override=system_prompt_override,
             ),
-            timeout=str_timeout,
+            reply_timeout,
         )
     except asyncio.TimeoutError:
         # Distinct message: the system is slow, not broken.
         logger.warning(
-            "LLM timed out after %.1fs for intent=%s — returning timeout fallback",
-            str_timeout,
+            "LLM timed out after %.2fs for intent=%s — returning timeout fallback",
+            max(reply_timeout, 0.0),
             intent,
         )
         reply = _TIMEOUT_REPLY
