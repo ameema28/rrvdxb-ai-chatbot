@@ -8,6 +8,21 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          # Throwaway CI database: trust auth, so no password lives in this file.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -20,5 +35,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run test suite
-        run: pytest -q
+      - name: Run test suite (SQLite)
+        run: pytest -q -p no:cacheprovider
+
+      - name: Run DB tests (PostgreSQL)
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://postgres@localhost:5432/postgres
+        run: pytest -q -p no:cacheprovider -m db

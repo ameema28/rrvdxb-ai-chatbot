@@ -8,6 +8,8 @@ pydantic-settings==2.1.0
 
 # Database
 sqlalchemy==2.0.25
+alembic==1.20.1
+psycopg[binary]==3.3.8
 
 # Auth (HS256 bearer tokens)
 PyJWT==2.15.1

@@ -36,6 +36,8 @@ from app.middleware.rate_limit import RATE_LIMIT_LIMIT
 from app.models.chat_history import ChatHistory
 from tests.support import TestingSessionLocal, auth_headers
 
+pytestmark = pytest.mark.db
+
 client = TestClient(app)
 
 

@@ -34,7 +34,12 @@ class Settings(BaseSettings):
     # --- Database ---
     database_url: str = Field(
         default="sqlite:///./rrvdxb.db",
-        description="SQLAlchemy DB URI — SQLite for local development",
+        description="SQLAlchemy DB URI: SQLite, or PostgreSQL (postgres://, postgresql:// "
+        "and postgresql+psycopg:// all use psycopg 3)",
+    )
+    db_auto_migrate: bool = Field(
+        default=True,
+        description="Run `alembic upgrade head` at startup (set false for multi-instance prod)",
     )
 
     # --- LLM (Groq only) ---

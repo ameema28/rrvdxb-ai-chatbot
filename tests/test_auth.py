@@ -17,8 +17,10 @@ from app.middleware.rate_limit import RATE_LIMIT_LIMIT
 from app.models.chat_history import ChatHistory
 from tests.support import TestingSessionLocal, auth_headers, make_token
 
+pytestmark = pytest.mark.db
+
 client = TestClient(app)
-CHAT = "/api/v1/ai/chat"
+CHAT ="/api/v1/ai/chat"
 DEMO = "/api/v1/auth/demo-token"
 INVALID = {
     "error": "Authentication required",

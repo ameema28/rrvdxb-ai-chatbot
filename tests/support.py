@@ -5,14 +5,16 @@ import time
 from typing import Any, Dict, Optional
 
 import jwt
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
-from app.core.database import Base
+from app.core.database import make_engine
 from app.core.dependencies import get_db
+from app.db.migrate import upgrade_to_head
 from app.main import app
+from app.models.chat_history import ChatHistory
 
 TEST_SECRET = os.environ["INTERNAL_JWT_SECRET"]
 
@@ -45,15 +47,32 @@ def auth_headers(sub: Any) -> Dict[str, str]:
 
 
 # --------------------------------------------------------------------------
-# In-memory SQLite DB shared by the endpoint tests (isolated, no file I/O)
+# Test database: in-memory SQLite by default, or TEST_DATABASE_URL (e.g. a
+# PostgreSQL service container). The schema is built by the Alembic
+# migration, not create_all, so every DB test also exercises the migration.
 # --------------------------------------------------------------------------
-test_engine = create_engine(
-    "sqlite:///:memory:",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")
+IS_SQLITE = TEST_DATABASE_URL.startswith("sqlite")
+
+if TEST_DATABASE_URL == "sqlite:///:memory:":
+    test_engine = create_engine(
+        TEST_DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+else:
+    test_engine = make_engine(TEST_DATABASE_URL)
+
+with test_engine.begin() as _conn:
+    upgrade_to_head(connection=_conn)
+
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-Base.metadata.create_all(bind=test_engine)
+
+
+def clear_chat_history() -> None:
+    """Empty chat_history so tests (and repeated Postgres runs) start clean."""
+    with test_engine.begin() as conn:
+        conn.execute(delete(ChatHistory))
 
 
 def override_get_db():

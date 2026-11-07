@@ -13,8 +13,8 @@ Why DB-backed memory?
 - In-process memory (dicts, lists) is lost on server restart or when
   requests hit a different worker. A database survives restarts and
   scales across multiple server instances.
-- SQLite is sufficient for local dev; PostgreSQL can be swapped in
-  production with zero code changes.
+- SQLite is used for local dev and tests; PostgreSQL (psycopg 3) is
+  selected through DATABASE_URL. The DB test suite runs on both.
 
 Context windowing (limit=N):
 - We load only the last N turns, not the full history, because:
@@ -30,6 +30,7 @@ Context windowing (limit=N):
 import logging
 from typing import List, Dict, Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.chat_history import ChatHistory
@@ -89,13 +90,15 @@ def load_recent_history(
         List of dicts, each with keys: role, content, created_at.
         Ordered oldest -> newest so the LLM reads chronologically.
     """
-    rows = (
-        db_session.query(ChatHistory)
-        .filter(ChatHistory.user_id == user_id)
-        .order_by(ChatHistory.created_at.desc())
+    # id breaks ties between rows with identical timestamps, so the order is
+    # deterministic on every backend.
+    stmt = (
+        select(ChatHistory)
+        .where(ChatHistory.user_id == user_id)
+        .order_by(ChatHistory.created_at.desc(), ChatHistory.id.desc())
         .limit(limit)
-        .all()
     )
+    rows = list(db_session.scalars(stmt))
 
     # Reverse so the LLM sees the conversation in chronological order
     rows = list(reversed(rows))

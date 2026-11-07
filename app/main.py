@@ -6,8 +6,11 @@ This module:
   2. Registers centralized exception handlers (Day 8).
   3. Mounts the catch-all error middleware (Day 8).
   4. Includes API routers.
-  5. Creates database tables on startup (convenience for local dev).
+  5. Applies Alembic migrations at startup when DB_AUTO_MIGRATE=true.
 """
+
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -15,8 +18,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_router
 from app.core.config import settings
-from app.core.database import Base, engine
 from app.core.security import validate_security_settings
+from app.db.migrate import upgrade_to_head
 from app.middleware.error_handler import (
     AppError,
     UnhandledErrorMiddleware,
@@ -26,9 +29,18 @@ from app.middleware.error_handler import (
     validation_error_handler,
 )
 
-# Create all SQLAlchemy tables if they don't exist.
-# In production, use Alembic migrations instead of create_all.
-Base.metadata.create_all(bind=engine)
+@asynccontextmanager
+async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
+    """
+    Startup: run `alembic upgrade head` when DB_AUTO_MIGRATE=true (default).
+
+    Idempotent, so single-instance deployments and local dev need no extra
+    step. With several instances, set DB_AUTO_MIGRATE=false and run the
+    migration once as a release step instead (concurrent upgrades can race).
+    """
+    if settings.db_auto_migrate:
+        upgrade_to_head(settings.database_url)
+    yield
 
 
 def _register_exception_handlers(application: FastAPI) -> None:
@@ -72,6 +84,7 @@ def create_application() -> FastAPI:
         debug=settings.debug,
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,
     )
 
     _register_exception_handlers(application)
