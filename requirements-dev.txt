@@ -1,0 +1,4 @@
+# Development / CI tools on top of the runtime requirements.
+-r requirements.txt
+pytest-cov==7.1.0
+ruff==0.17.4
