@@ -1,0 +1,55 @@
+# Local development with Docker.
+#
+#   docker compose up -d --build                       SQLite in a named volume
+#   COMPOSE_DATABASE_URL=postgresql://postgres@db:5432/postgres \
+#     docker compose --profile postgres up -d --build  optional local PostgreSQL
+#
+# INTERNAL_JWT_SECRET (at least 32 characters) and, optionally, GROQ_API_KEY
+# come from your own .env file. Without a Groq key every reply is the
+# fallback text.
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: "8000"
+      APP_ENV: development
+      DEMO_TOKENS_ENABLED: "true"
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-sqlite:////home/user/data/rrvdxb.db}
+    volumes:
+      - rrvdxb-data:/home/user/data
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Optional throwaway PostgreSQL, only with --profile postgres. Trust auth and
+  # no published port: it is reachable only from the compose network.
+  db:
+    image: postgres:16
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - rrvdxb-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  rrvdxb-data:
+  rrvdxb-pg:

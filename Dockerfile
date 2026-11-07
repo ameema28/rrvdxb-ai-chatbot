@@ -1,38 +1,68 @@
-# RRVDXB AI Shopping Chatbot — container image (Day 10)
+# RRVDXB AI Shopping Chatbot: container image for Google Cloud Run (and local Docker).
 #
-# Single-stage build, tuned for Render or any PORT-based PaaS:
-#   - python:3.11-slim matches the local dev version AND the CI runner, so
-#     behavior is identical everywhere.
-#   - Every dependency ships manylinux wheels, so no compiler toolchain is
-#     needed. If a future dependency lacks a wheel, add:
-#       RUN apt-get update && apt-get install -y --no-install-recommends build-essential gcc g++
-#   - The FAQ vector store is baked INTO the image at `docker build` time:
-#       * the ~90MB all-MiniLM-L6-v2 model downloads ONCE during the build and
-#         is baked in -> zero download when the container starts;
-#       * chroma_db/ is baked in, so RAG answers are grounded from second zero.
-#   - Runtime reads $PORT (Render convention) with a 8000 fallback so plain
-#     `docker run` needs zero configuration.
+# - CPU-only torch, installed in its own layer from the PyTorch CPU index.
+# - Runtime dependencies only: requirements-dev.txt is never installed.
+# - Runs as a non-root user (uid 1000) and listens on $PORT (default 8080).
+# - The embedding model and the FAQ Chroma index are built into the image, and
+#   Hugging Face is offline at runtime (no download at start-up).
+# - INTERNAL_JWT_SECRET is NOT in the image: the app refuses to start without
+#   one (at least 32 characters). On Cloud Run it comes from Secret Manager.
 
-# syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
-ENV PYTHONUNBUFFERED=1 \
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    HF_HOME=/app/.cache/huggingface
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=120
 
 WORKDIR /app
 
-# Dependencies first: this layer is cached unless requirements.txt changes.
+# Layer 1: CPU-only torch from the PyTorch CPU index only. The torch==2.15.0
+# pin in requirements.txt is then already satisfied, so pip keeps this build.
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0
+
+# Layer 2: the other runtime dependencies.
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install -r requirements.txt
 
-# Application code + the vector-store build script.
-COPY app ./app
-COPY scripts ./scripts
+# Non-root runtime user. /home/user/data is the mount point for the
+# docker-compose volume (SQLite chat history in local Docker).
+RUN useradd --create-home --uid 1000 user \
+ && mkdir -p /home/user/data \
+ && chown user:user /home/user/data
 
-# Build the FAQ vector store into the image (idempotent, see scripts/).
+# Application code is owned by root, so the runtime user can only read it.
+COPY --chown=root:root app ./app
+COPY --chown=root:root scripts/build_vector_store.py ./scripts/build_vector_store.py
+
+# The Chroma index directory is the one path under /app the runtime user owns:
+# Chroma opens its SQLite file read-write.
+RUN mkdir -p /app/app/ai/chatbot/rag/chroma_db \
+ && chown user:user /app/app/ai/chatbot/rag/chroma_db
+
+USER user
+ENV HOME=/home/user \
+    HF_HOME=/home/user/.cache/huggingface
+
+# Download the embedding model and build the FAQ index (12 chunks) at build time.
 RUN python scripts/build_vector_store.py
 
-EXPOSE 8000
+# Runtime defaults. Without DATABASE_URL, chat history is SQLite in /tmp, which
+# is reset whenever the container restarts. Demo tokens stay off unless enabled.
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    PORT=8080 \
+    APP_ENV=production \
+    DEBUG=false \
+    DATABASE_URL=sqlite:////tmp/rrvdxb.db \
+    DB_AUTO_MIGRATE=true \
+    RAG_WARMUP=true \
+    DEMO_TOKENS_ENABLED=false
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+EXPOSE 8080
+
+# One worker: the rate limiter is in memory, per process. --no-proxy-headers
+# keeps request.client as the socket peer; TRUST_PROXY decides whether
+# X-Forwarded-For is used (app/core/client_ip.py).
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --no-proxy-headers"]
