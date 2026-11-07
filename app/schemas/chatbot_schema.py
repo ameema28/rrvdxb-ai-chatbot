@@ -81,3 +81,13 @@ class ChatResponse(BaseModel):
         le=1.0,
         description="Confidence of the intent classification (0.0–1.0)",
     )
+    response_time_ms: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Server time to handle this chat message, in milliseconds",
+    )
+    fallback_used: Optional[bool] = Field(
+        None,
+        description="True when the reply is fixed fallback text because the LLM call "
+        "timed out or failed (a price-guard replacement is not counted here)",
+    )

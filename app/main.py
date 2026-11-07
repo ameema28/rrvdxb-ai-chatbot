@@ -16,6 +16,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.ai.chatbot.rag import vector_store
@@ -23,6 +24,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.security import validate_security_settings
 from app.db.migrate import upgrade_to_head
+from app.demo_page import DEMO_PAGE_HEADERS, DEMO_PAGE_HTML
 from app.middleware.error_handler import (
     AppError,
     UnhandledErrorMiddleware,
@@ -106,6 +108,11 @@ def create_application() -> FastAPI:
 
     # Mount all v1 routes under /api/v1
     application.include_router(api_router, prefix="/api/v1")
+
+    @application.get("/", include_in_schema=False, response_class=HTMLResponse)
+    async def demo_page() -> HTMLResponse:
+        """Public demo chat page (same origin; not rate limited)."""
+        return HTMLResponse(DEMO_PAGE_HTML, headers=DEMO_PAGE_HEADERS)
 
     @application.get("/health", tags=["health"])
     async def health_check() -> dict:

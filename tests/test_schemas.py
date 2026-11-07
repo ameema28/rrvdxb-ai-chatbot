@@ -80,6 +80,8 @@ def test_chat_response_round_trips_recommendations_deal_intent():
         "deal": "Summer Sale - 20% off (code: SUMMER20)",
         "intent": "recommend_product",
         "confidence": 0.95,
+        "response_time_ms": 812,
+        "fallback_used": False,
     }
     response = ChatResponse.model_validate(payload)
     assert response.model_dump() == payload
@@ -94,6 +96,8 @@ def test_chat_response_optional_fields_default_to_none():
     assert response.deal is None
     assert response.intent is None
     assert response.confidence is None
+    assert response.response_time_ms is None
+    assert response.fallback_used is None
 
 
 def test_chat_response_rejects_out_of_range_confidence():

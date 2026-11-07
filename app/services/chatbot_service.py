@@ -187,13 +187,15 @@ async def handle_chat_message(
         context and against the named product's catalog price; replace the
         reply if either check fails.
     - 6 Persist the turn (fallback turns persist as general_chat).
-    - 7 Return ChatResponse (reply, recommended_products, deal, intent).
+    - 7 Return ChatResponse (reply, recommended_products, deal, intent,
+        confidence, response_time_ms, fallback_used).
     """
     # Step 0 — one total time budget for the whole request. Every blocking
     # step (intent LLM, retrieval, reply LLM) runs in a worker thread under
     # min(its own cap, time left before the deadline).
     step_times: List[Tuple[str, float]] = []
     step_started = time.perf_counter()
+    request_started = step_started
     deadline = time.monotonic() + settings.request_budget_seconds
 
     def _remaining() -> float:
@@ -345,6 +347,7 @@ async def handle_chat_message(
     # ------------------------------------------------------------------
     llm_started = time.perf_counter()
     reply_timeout = min(settings.llm_timeout_seconds, _remaining())
+    llm_fallback = False
     try:
         reply = await _run_bounded(
             functools.partial(
@@ -365,9 +368,11 @@ async def handle_chat_message(
             intent,
         )
         reply = _TIMEOUT_REPLY
+        llm_fallback = True
     except RuntimeError as exc:
         # The LLM client already logged the technical details.
         logger.warning("LLM call failed, returning fallback: %s", exc)
+        llm_fallback = True
         reply = (
             "I'm here to help with your RRVDXB shopping experience. "
             "I'm having a little trouble right now, but our team is on it. "
@@ -410,10 +415,7 @@ async def handle_chat_message(
     #     'general_chat' intent so chat_history constraints hold; the
     #     ORIGINAL intent is still exposed in ChatResponse for observability.
     # ------------------------------------------------------------------
-    persist_intent = (
-        intent if reply not in (_TIMEOUT_REPLY,) and "human support" not in reply
-        else _FALLBACK_PERSIST_INTENT
-    )
+    persist_intent = _FALLBACK_PERSIST_INTENT if llm_fallback else intent
     save_turn(
         db_session=db,
         user_id=effective_user_id,
@@ -438,4 +440,6 @@ async def handle_chat_message(
         deal=deal,
         intent=intent,
         confidence=intent_result.confidence,
+        response_time_ms=round((time.perf_counter() - request_started) * 1000),
+        fallback_used=llm_fallback,
     )
