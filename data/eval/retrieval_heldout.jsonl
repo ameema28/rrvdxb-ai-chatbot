@@ -1,0 +1,25 @@
+{"q": "Do you ship within Sharjah?", "expected_id": 1}
+{"q": "How fast is delivery to Dubai Marina?", "expected_id": 1}
+{"q": "Can I get my order shipped to Dammam?", "expected_id": 2}
+{"q": "Will my order reach Pakistan? I'm in Faisalabad", "expected_id": 3}
+{"q": "Can customers in Manchester order from you?", "expected_id": 4}
+{"q": "What's your refund window for unused items?", "expected_id": 5}
+{"q": "My order arrived damaged, can I return it?", "expected_id": 5}
+{"q": "Do you accept Tabby or other buy now pay later options?", "expected_id": 6}
+{"q": "Can I pay by Mastercard?", "expected_id": 6}
+{"q": "Is delivery free if I spend enough?", "expected_id": 7}
+{"q": "Is there a warranty on fashion items?", "expected_id": 8}
+{"q": "Will I get a text message when my order ships?", "expected_id": 9}
+{"q": "Do you sell counterfeit products?", "expected_id": 10}
+{"q": "Any promotions running for new customers?", "expected_id": 11}
+{"q": "Do you stock the iPhone 14 base model?", "expected_id": 12}
+{"q": "Does Amazon deliver to Riyadh?", "expected_id": null}
+{"q": "How long does Noon take to refund an order?", "expected_id": null}
+{"q": "Can you deliver pizza to my office?", "expected_id": null}
+{"q": "How do I send a letter by post to London?", "expected_id": null}
+{"q": "Track my DHL parcel from Germany", "expected_id": null}
+{"q": "What time does Dubai Mall open?", "expected_id": null}
+{"q": "Is the Dubai metro running late tonight?", "expected_id": null}
+{"q": "How much is a flight from Karachi to Lahore?", "expected_id": null}
+{"q": "What's the exchange rate from AED to PKR?", "expected_id": null}
+{"q": "Recommend a good restaurant in Jeddah", "expected_id": null}

@@ -8,6 +8,7 @@ vector store — search_faqs is mocked so tests are instant and deterministic.
 from unittest.mock import patch
 
 from app.ai.chatbot.rag.retriever import retrieve_faq_context
+from app.core.config import settings
 
 
 def _fake_candidates():
@@ -18,7 +19,7 @@ def _fake_candidates():
         {"id": 2, "question": "Do you offer free shipping?",
          "answer": "Free shipping over 489 AED.", "similarity": 0.85},
         {"id": 3, "question": "Do you sell watches?",
-         "answer": "No.", "similarity": 0.45},
+         "answer": "No.", "similarity": 0.44},
         {"id": 4, "question": "How old are you?",
          "answer": "N/A", "similarity": 0.30},
     ]
@@ -31,9 +32,10 @@ def test_retriever_keeps_only_above_threshold_chunks():
     ):
         result = retrieve_faq_context("what is your return policy?")
 
-    # Relevance gate with the default threshold 0.6: 0.92 and 0.85 survive.
+    # Relevance gate with the default threshold 0.45: 0.92 and 0.85 survive.
+    assert settings.rag_similarity_threshold == 0.45
     assert len(result) == 2
-    assert all(chunk["similarity"] >= 0.6 for chunk in result)
+    assert all(chunk["similarity"] >= 0.45 for chunk in result)
     assert result[0]["question"] == "What is your return policy?"
     # Output contract is exactly question / answer / similarity.
     assert set(result[0].keys()) == {"question", "answer", "similarity"}
@@ -42,7 +44,7 @@ def test_retriever_keeps_only_above_threshold_chunks():
 
 def test_retriever_returns_empty_when_nothing_passes_threshold():
     below = [
-        {"id": 1, "question": "Q1", "answer": "A1", "similarity": 0.55},
+        {"id": 1, "question": "Q1", "answer": "A1", "similarity": 0.44},
         {"id": 2, "question": "Q2", "answer": "A2", "similarity": 0.40},
     ]
     with patch(

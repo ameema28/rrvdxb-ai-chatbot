@@ -9,6 +9,7 @@ very first run; CI caches ~/.cache/huggingface). No LLM and no API key.
 import pytest
 
 from app.ai.chatbot.rag import retriever, vector_store
+from app.core.config import settings
 
 pytestmark = pytest.mark.chroma
 
@@ -48,4 +49,4 @@ def test_retriever_gate_passes_the_real_return_policy_hit(real_index):
     chunks = retriever.retrieve_faq_context("what is your return policy?")
     assert chunks
     assert chunks[0]["question"] == "What is your return policy?"
-    assert chunks[0]["similarity"] >= retriever.DEFAULT_SIMILARITY_THRESHOLD
+    assert chunks[0]["similarity"] >= settings.rag_similarity_threshold

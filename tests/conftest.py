@@ -20,6 +20,7 @@ os.environ.pop("TRUST_PROXY_HOPS", None)
 os.environ["CHAT_IP_RATE_PER_MINUTE"] = "1000"
 # No model loading at app startup in tests; tests/test_warmup.py covers it.
 os.environ["RAG_WARMUP"] = "false"
+os.environ.pop("RAG_SIMILARITY_THRESHOLD", None)
 
 import pytest  # noqa: E402
 

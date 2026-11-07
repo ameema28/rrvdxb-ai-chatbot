@@ -1,11 +1,15 @@
 """Retrieval evaluation for the FAQ RAG index (no LLM, no API key).
 
 Builds a fresh ChromaDB index from app/mock_data/faqs.json in a temporary
-directory (the repo's own index is not touched), runs every question in
-data/eval/retrieval_eval.jsonl through search_faqs(top_k=3), and reports:
+directory (the repo's own index is not touched), runs every question of two
+sets through search_faqs(top_k=3):
+  dev      data/eval/retrieval_eval.jsonl    (used to choose the threshold)
+  heldout  data/eval/retrieval_heldout.jsonl (written before any measurement,
+           used only to check the chosen threshold)
+and reports, per set:
 
 Gated metrics (what the chat flow uses: only hits with similarity >= the
-retriever threshold count, currently 0.6):
+retriever threshold count, RAG_SIMILARITY_THRESHOLD, default 0.45):
   hit@1, hit@3, MRR@3, in-scope false-rejection rate (no hit passes the gate),
   off-topic rejection rate (no hit passes the gate for an off-topic question).
 Raw ranking metrics (no threshold), to separate ranking misses from
@@ -29,6 +33,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 DATASET_PATH = REPO_ROOT / "data" / "eval" / "retrieval_eval.jsonl"
+HELDOUT_PATH = REPO_ROOT / "data" / "eval" / "retrieval_heldout.jsonl"
+DATASETS = {"dev": DATASET_PATH, "heldout": HELDOUT_PATH}
 TOP_K = 3
 
 Search = Callable[[str, int], List[Dict]]
@@ -106,9 +112,11 @@ def evaluate(rows: List[Dict], search: Search, threshold: float, top_k: int = TO
     gated_metrics["off_topic_rejection_rate"] = _rate(
         sum(not r["passes_gate"] for r in off_topic), len(off_topic)
     )
+    off_topic_top1 = [r["top"][0]["similarity"] for r in off_topic if r["top"]]
     return {
         "threshold": threshold,
         "top_k": top_k,
+        "off_topic_max_similarity": max(off_topic_top1) if off_topic_top1 else None,
         "in_scope_questions": len(in_scope),
         "off_topic_questions": len(off_topic),
         "gated": gated_metrics,
@@ -122,61 +130,79 @@ def evaluate(rows: List[Dict], search: Search, threshold: float, top_k: int = TO
     }
 
 
-def run_on_fresh_index(rows: List[Dict]) -> Dict:
-    """Build the FAQ index in a temporary directory and evaluate `rows` on it."""
-    from app.ai.chatbot.rag import retriever, vector_store
+def run_on_fresh_index(datasets: Dict[str, List[Dict]], threshold: Optional[float] = None) -> Dict:
+    """
+    Build the FAQ index once in a temporary directory and evaluate every set.
 
+    Returns {set name: evaluate() result, ..., "indexed_chunks": n}. The
+    threshold defaults to RAG_SIMILARITY_THRESHOLD (the value the app uses).
+    """
+    from app.ai.chatbot.rag import vector_store
+    from app.core.config import settings
+
+    if threshold is None:
+        threshold = settings.rag_similarity_threshold
     saved = (vector_store._PERSIST_DIR, vector_store._collection)
+    results: Dict = {}
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         vector_store._PERSIST_DIR = Path(tmp) / "chroma_db"
         vector_store._collection = None
         try:
             chunks = vector_store.build_vector_store()
-            result = evaluate(
-                rows,
-                lambda q, k: vector_store.search_faqs(q, top_k=k),
-                retriever.DEFAULT_SIMILARITY_THRESHOLD,
-            )
+            for name, rows in datasets.items():
+                results[name] = evaluate(
+                    rows, lambda q, k: vector_store.search_faqs(q, top_k=k), threshold
+                )
         finally:
             vector_store._PERSIST_DIR, vector_store._collection = saved
-    result["indexed_chunks"] = chunks
-    return result
+    results["indexed_chunks"] = chunks
+    return results
 
 
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out", required=True, help="JSON results file, outside the repository")
-    args = parser.parse_args(argv)
-    try:
-        out = resolve_out_path(args.out)
-    except ValueError as err:
-        parser.error(str(err))
-
-    logging.basicConfig(level=logging.WARNING)
-    rows = load_dataset()
-    started = time.perf_counter()
-    result = run_on_fresh_index(rows)
-    result["seconds"] = round(time.perf_counter() - started, 2)
-    result["run_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-
+def _print_set(name: str, result: Dict) -> None:
     gated, raw = result["gated"], result["raw"]
     print(
-        f"{result['in_scope_questions']} in-scope + {result['off_topic_questions']} off-topic questions, "
-        f"{result['indexed_chunks']} chunks, threshold {result['threshold']}"
+        f"\n[{name}] {result['in_scope_questions']} in-scope + {result['off_topic_questions']} off-topic, "
+        f"threshold {result['threshold']}"
     )
     print(
         f"Gated: hit@1={gated['hit_at_1']} hit@3={gated['hit_at_3']} MRR@3={gated['mrr_at_3']} "
         f"false-rejection={gated['in_scope_false_rejection_rate']} "
-        f"off-topic rejection={gated['off_topic_rejection_rate']}"
+        f"off-topic rejection={gated['off_topic_rejection_rate']} "
+        f"off-topic max={result['off_topic_max_similarity']}"
     )
     print(f"Raw:   hit@1={raw['hit_at_1']} hit@3={raw['hit_at_3']} MRR@3={raw['mrr_at_3']}")
     for row in result["per_question"]:
         top = ", ".join(f"{h['id']}:{h['similarity']:.3f}" for h in row["top"])
         print(f"  expected={row['expected_id']} gate={'pass' if row['passes_gate'] else 'reject'} [{top}] {row['q']}")
 
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--out", required=True, help="JSON results file, outside the repository")
+    parser.add_argument("--threshold", type=float, help="Override the threshold (default: RAG_SIMILARITY_THRESHOLD)")
+    args = parser.parse_args(argv)
+    try:
+        out = resolve_out_path(args.out)
+        if args.threshold is not None and not 0.0 <= args.threshold <= 1.0:
+            raise ValueError("--threshold must be between 0 and 1")
+    except ValueError as err:
+        parser.error(str(err))
+
+    logging.basicConfig(level=logging.WARNING)
+    datasets = {name: load_dataset(path) for name, path in DATASETS.items()}
+    started = time.perf_counter()
+    result = run_on_fresh_index(datasets, args.threshold)
+    result["seconds"] = round(time.perf_counter() - started, 2)
+    result["run_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+    print(f"{result['indexed_chunks']} chunks indexed")
+    for name in DATASETS:
+        _print_set(name, result[name])
+
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"Saved to {out}")
+    print(f"\nSaved to {out}")
     return 0
 
 

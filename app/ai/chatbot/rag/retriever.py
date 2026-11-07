@@ -18,21 +18,21 @@ Author: Ameema Rashid — RRVDXB AI Sprint, Day 6.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.ai.chatbot.rag.vector_store import search_faqs
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 3                  # how many candidate chunks to fetch
-DEFAULT_SIMILARITY_THRESHOLD = 0.6  # min cosine similarity (exact return-policy = 0.66)
 MAX_TOP_K = 10                     # hard cap: never blow up the prompt with noise
 
 
 def retrieve_faq_context(
     query: str,
     k: int = DEFAULT_TOP_K,
-    similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+    similarity_threshold: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """
     Retrieve FAQ chunks relevant enough to ground a product_faq answer.
@@ -41,7 +41,9 @@ def retrieve_faq_context(
         query: The customer's raw question (e.g. "what is your return policy?").
         k: How many candidate chunks to pull from the store (capped at 10).
         similarity_threshold: Minimum cosine similarity (0..1) a chunk must
-            meet to be considered trustworthy context.
+            meet to be considered trustworthy context. None (the default)
+            uses RAG_SIMILARITY_THRESHOLD (default 0.45, chosen on the dev eval
+            set and checked on a held-out set; see DEPLOYMENT.md).
 
     Returns:
         List of dicts, most-similar first, each shaped:
@@ -58,6 +60,8 @@ def retrieve_faq_context(
     # Chroma's n_results; a huge k would bloat the prompt with tokens + noise.
     k = max(1, min(k, MAX_TOP_K))
     # Guard 3: clamp the threshold into [0, 1] so callers can't pass nonsense.
+    if similarity_threshold is None:
+        similarity_threshold = settings.rag_similarity_threshold
     similarity_threshold = max(0.0, min(similarity_threshold, 1.0))
 
     # The vector store may not be built yet, the embedding model may be

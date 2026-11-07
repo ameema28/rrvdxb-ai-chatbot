@@ -80,6 +80,12 @@ class Settings(BaseSettings):
 
     # --- Runtime ---
     debug: bool = Field(default=True, description="FastAPI debug mode")
+    rag_similarity_threshold: float = Field(
+        default=0.45,
+        ge=0.0,
+        le=1.0,
+        description="Minimum cosine similarity for an FAQ chunk to ground an answer",
+    )
     rag_warmup: bool = Field(
         default=True,
         description="Load the embedding model and FAQ index at startup (reported in /health)",
