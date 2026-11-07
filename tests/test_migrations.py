@@ -6,12 +6,12 @@ import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from app.core.config import settings
 from app.core.database import Base, normalize_database_url
 from app.db.migrate import downgrade_to_base, upgrade_to_head
-from tests.support import test_engine
+from tests.support import TEST_DATABASE_URL, test_engine
 
 pytestmark = pytest.mark.db
 
@@ -37,6 +37,18 @@ def test_downgrade_then_upgrade_round_trip():
     with test_engine.begin() as conn:
         upgrade_to_head(connection=conn)
     assert "chat_history" in inspect(test_engine).get_table_names()
+
+
+@pytest.mark.skipif(
+    "sslmode=require" not in TEST_DATABASE_URL,
+    reason="needs a PostgreSQL TEST_DATABASE_URL with sslmode=require",
+)
+def test_connection_uses_tls_when_required():
+    with test_engine.connect() as conn:
+        uses_tls = conn.execute(
+            text("SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()")
+        ).scalar()
+    assert uses_tls is True
 
 
 def test_upgrade_is_idempotent():
