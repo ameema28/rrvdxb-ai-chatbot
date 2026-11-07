@@ -1,0 +1,37 @@
+{"q": "Can I get my order delivered in Dubai?", "expected_id": 1}
+{"q": "do u deliver anywhere in the emirates", "expected_id": 1}
+{"q": "Is next-day delivery possible to Abu Dhabi?", "expected_id": 1}
+{"q": "Can you send packages to Riyadh?", "expected_id": 2}
+{"q": "do you deliver in saudi", "expected_id": 2}
+{"q": "I live in Jeddah, will my parcel reach me?", "expected_id": 2}
+{"q": "Can I order from Lahore?", "expected_id": 3}
+{"q": "is delivery available in islamabad", "expected_id": 3}
+{"q": "I'm in London, can you post items to me?", "expected_id": 4}
+{"q": "Do you deliver to England and Scotland?", "expected_id": 4}
+{"q": "Can I send something back if I change my mind?", "expected_id": 5}
+{"q": "how many days do i have to return an item", "expected_id": 5}
+{"q": "Will you take back a jacket I didn't like?", "expected_id": 5}
+{"q": "Can I return headphones after opening the box?", "expected_id": 5}
+{"q": "Can I pay with Apple Pay?", "expected_id": 6}
+{"q": "which cards do you take", "expected_id": 6}
+{"q": "Is cash on delivery an option?", "expected_id": 6}
+{"q": "How much do I need to spend to avoid delivery charges?", "expected_id": 7}
+{"q": "what's the delivery fee for small orders", "expected_id": 7}
+{"q": "Is my laptop covered if it breaks after a few months?", "expected_id": 8}
+{"q": "do electronics have a guarantee", "expected_id": 8}
+{"q": "Where is my parcel right now?", "expected_id": 9}
+{"q": "how do I check the status of my delivery", "expected_id": 9}
+{"q": "I never got a tracking SMS, where can I see my order?", "expected_id": 9}
+{"q": "Are the handbags genuine or fakes?", "expected_id": 10}
+{"q": "is this real designer stuff", "expected_id": 10}
+{"q": "Do you have any coupon codes?", "expected_id": 11}
+{"q": "is there a discount for first-time buyers", "expected_id": 11}
+{"q": "Is the regular iPhone 14 available?", "expected_id": 12}
+{"q": "can I buy an iphone 14 from you", "expected_id": 12}
+{"q": "What's the weather in Dubai tomorrow?", "expected_id": null}
+{"q": "Write me a Python function to sort a list", "expected_id": null}
+{"q": "Who won the football match last night?", "expected_id": null}
+{"q": "Give me a recipe for chicken biryani", "expected_id": null}
+{"q": "Tell me a joke", "expected_id": null}
+{"q": "What is the capital of Australia?", "expected_id": null}
+{"q": "How do I fix a flat bicycle tyre?", "expected_id": null}
