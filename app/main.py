@@ -7,8 +7,10 @@ This module:
   3. Mounts the catch-all error middleware (Day 8).
   4. Includes API routers.
   5. Applies Alembic migrations at startup when DB_AUTO_MIGRATE=true.
+  6. Warms up the embedding model and FAQ index when RAG_WARMUP=true.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -16,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.ai.chatbot.rag import vector_store
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.security import validate_security_settings
@@ -37,9 +40,16 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     Idempotent, so single-instance deployments and local dev need no extra
     step. With several instances, set DB_AUTO_MIGRATE=false and run the
     migration once as a release step instead (concurrent upgrades can race).
+
+    Then, when RAG_WARMUP=true (default), load the embedding model and the
+    FAQ index and run one query. Uvicorn accepts connections only after this
+    returns, so a TCP startup probe waits for a warm app. A failed warm-up
+    is logged and the app still starts; /health then reports "degraded".
     """
     if settings.db_auto_migrate:
         upgrade_to_head(settings.database_url)
+    if settings.rag_warmup:
+        await asyncio.to_thread(vector_store.warm_up)
     yield
 
 
@@ -99,8 +109,20 @@ def create_application() -> FastAPI:
 
     @application.get("/health", tags=["health"])
     async def health_check() -> dict:
-        """Liveness probe for load balancers and monitoring."""
-        return {"status": "ok", "service": settings.app_name}
+        """
+        Liveness probe (always HTTP 200) with RAG readiness.
+
+        rag_ready: the embedding model and FAQ index answered a warm-up query.
+        status: "degraded" when warm-up is enabled but did not succeed (FAQ
+        answers then use the no-match path), otherwise "ok".
+        """
+        rag_ready = vector_store.is_ready()
+        degraded = settings.rag_warmup and not rag_ready
+        return {
+            "status": "degraded" if degraded else "ok",
+            "service": settings.app_name,
+            "rag_ready": rag_ready,
+        }
 
     return application
 

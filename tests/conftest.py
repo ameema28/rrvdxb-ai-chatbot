@@ -18,6 +18,8 @@ os.environ.pop("TRUST_PROXY_HOPS", None)
 # Every TestClient request comes from one IP; a high per-IP chat cap keeps
 # multi-user tests independent. tests/test_client_ip.py lowers it explicitly.
 os.environ["CHAT_IP_RATE_PER_MINUTE"] = "1000"
+# No model loading at app startup in tests; tests/test_warmup.py covers it.
+os.environ["RAG_WARMUP"] = "false"
 
 import pytest  # noqa: E402
 

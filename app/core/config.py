@@ -80,6 +80,10 @@ class Settings(BaseSettings):
 
     # --- Runtime ---
     debug: bool = Field(default=True, description="FastAPI debug mode")
+    rag_warmup: bool = Field(
+        default=True,
+        description="Load the embedding model and FAQ index at startup (reported in /health)",
+    )
 
     # --- Performance / NFR (Day 7) ---
     # One total budget per chat request; each blocking step also has its own

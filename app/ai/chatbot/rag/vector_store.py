@@ -17,6 +17,7 @@ Author: Ameema Rashid — RRVDXB AI Sprint, Day 5.
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -45,6 +46,7 @@ _MODEL_NAME = "all-MiniLM-L6-v2"
 # ---------------------------------------------------------------------------
 _embedding_model: Optional[SentenceTransformer] = None
 _collection: Optional[Collection] = None
+_ready: bool = False
 
 
 # ===========================================================================
@@ -293,3 +295,45 @@ def search_faqs(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
             }
         )
     return out
+
+
+# ===========================================================================
+# 7. Startup warm-up and readiness
+# ===========================================================================
+def warm_up() -> bool:
+    """
+    Load the embedding model and the collection, then run one real query.
+
+    Called once at startup so the first customer FAQ query does not pay for
+    model loading inside the 1.0 s retrieval cap. Never raises: on failure it
+    logs the error type and returns False, and FAQ answers then take the
+    existing no-match path.
+
+    Returns:
+        True when the model is loaded and the index answers a query.
+    """
+    global _ready
+    started = time.perf_counter()
+    try:
+        _get_embedding_model()
+        collection = get_vector_store()
+        if collection.count() == 0:
+            _ready = False
+            logger.warning("RAG warm-up: the FAQ index is empty")
+            return False
+        search_faqs("warm-up query", top_k=1)
+    except Exception as exc:
+        _ready = False
+        logger.warning(
+            "RAG warm-up failed (%s); FAQ answers will use the no-match path",
+            type(exc).__name__,
+        )
+        return False
+    _ready = True
+    logger.info("RAG warm-up done in %.2fs", time.perf_counter() - started)
+    return True
+
+
+def is_ready() -> bool:
+    """True after a successful warm_up() in this process."""
+    return _ready
