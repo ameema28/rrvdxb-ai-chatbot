@@ -16,7 +16,8 @@ class ChatRequest(BaseModel):
 
     Attributes:
         message: The user's natural-language query.
-        user_id: Optional explicit user ID (fallback if header is unavailable).
+        user_id: Accepted for backward compatibility and ignored; identity
+            comes only from the bearer token's "sub" claim.
     """
 
     message: str = Field(
@@ -28,7 +29,7 @@ class ChatRequest(BaseModel):
     )
     user_id: Optional[int] = Field(
         None,
-        description="Optional user ID override",
+        description="Ignored (kept for backward compatibility); the bearer token identifies the user",
     )
 
 

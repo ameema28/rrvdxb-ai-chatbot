@@ -9,6 +9,9 @@ pydantic-settings==2.1.0
 # Database
 sqlalchemy==2.0.25
 
+# Auth (HS256 bearer tokens)
+PyJWT==2.15.1
+
 # AI / LLM (Day 1: direct API calls; hand-rolled orchestration, no LangChain)
 groq==1.6.0
 

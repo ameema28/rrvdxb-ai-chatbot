@@ -77,7 +77,7 @@ def _keywords(message: str) -> list[str]:
     return words
 
 
-def get_recommendations(user_id: int, message: str) -> list[dict[str, Any]]:
+def get_recommendations(user_id: str, message: str) -> list[dict[str, Any]]:
     """Return up to three mock products matching the user's request.
 
     A message keyword counts when it equals a product's name/brand/category

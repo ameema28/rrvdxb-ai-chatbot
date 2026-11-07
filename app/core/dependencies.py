@@ -7,11 +7,17 @@ This promotes testability and keeps route handlers clean.
 
 from typing import Generator, Optional
 
-from fastapi import Header
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
-from app.middleware.error_handler import AuthenticationError, ValidationError
+from app.core.security import decode_token
+from app.middleware.error_handler import AuthenticationError
+
+# auto_error=False: we raise our own AuthenticationError so the 401 body uses
+# the canonical {"error", "detail", "status_code"} shape.
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -30,34 +36,17 @@ def get_db() -> Generator[Session, None, None]:
 
 
 async def get_current_user_id(
-    x_user_id: Optional[str] = Header(
-        default=None,
-        alias="X-User-Id",
-        description="User ID from client/gateway (STUB — replaced by JWT later)",
-    )
-) -> int:
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+) -> str:
     """
-    STUB: Extract and validate the current user ID from the X-User-Id header.
+    Return the verified user id: the "sub" claim of the HS256 bearer token.
 
-    In production this will be replaced by real JWT verification that decodes
-    an Authorization token and returns the authenticated user's ID from the
-    token's `sub` claim. Because every route depends on this single function,
-    that swap touches NO route code.
-
-    Missing header -> AuthenticationError (401)
-    Non-integer     -> ValidationError   (400)
-
-    Returns:
-        The authenticated user's ID as an int.
+    Any X-User-Id header is ignored; identity comes only from the token.
 
     Raises:
-        AuthenticationError: If the header is missing.
-        ValidationError:     If the header is not a valid integer.
+        AuthenticationError (401): no bearer token, or the token fails
+            verification (signature, expiry, issuer, audience, claims).
     """
-    # TODO: Replace with JWT validation when Auth API is ready
-    if x_user_id is None:
-        raise AuthenticationError(detail="X-User-Id header missing")
-    try:
-        return int(x_user_id)
-    except (TypeError, ValueError):
-        raise ValidationError(detail="X-User-Id must be an integer")
+    if credentials is None:
+        raise AuthenticationError(detail="Bearer token missing")
+    return decode_token(credentials.credentials)

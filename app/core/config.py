@@ -5,8 +5,10 @@ BaseSettings automatically loads values from environment variables and .env file
 This is the single source of truth for all configuration in the app.
 """
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 
 class Settings(BaseSettings):
@@ -18,7 +20,10 @@ class Settings(BaseSettings):
         database_url: SQLAlchemy connection string. SQLite for local dev.
         groq_api_key: Secret key for Groq API calls (Groq is the only provider).
         llm_model: Groq model name.
-        internal_jwt_secret: Used for signing/verifying internal service tokens.
+        app_env: development / test / production.
+        internal_jwt_secret: HS256 secret used to sign and verify bearer tokens.
+        jwt_issuer / jwt_audience: Required 'iss' / 'aud' claim values.
+        demo_tokens_enabled: Opt-in anonymous demo-token endpoint.
         debug: Enables FastAPI debug mode and verbose logging.
         rate_limit_per_minute: Per-user chat request budget (sliding window).
     """
@@ -42,10 +47,30 @@ class Settings(BaseSettings):
         description="Groq API key (without it every reply is the fallback text)",
     )
 
-    # --- Security ---
-    internal_jwt_secret: str = Field(
-        default="change-me-in-production",
-        description="Secret for internal JWT signing — MUST be rotated in production",
+    # --- Environment ---
+    app_env: Literal["development", "test", "production"] = Field(
+        default="production",
+        description="Runtime environment; only 'test' relaxes the JWT secret length check",
+    )
+
+    # --- Security (HS256 bearer tokens) ---
+    internal_jwt_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description="HS256 signing secret; at least 32 characters outside APP_ENV=test",
+    )
+    jwt_issuer: str = Field(default="rrvdxb-chatbot", description="Required 'iss' claim")
+    jwt_audience: str = Field(default="rrvdxb-chat", description="Required 'aud' claim")
+
+    # --- Public demo tokens (opt-in) ---
+    demo_tokens_enabled: bool = Field(
+        default=False,
+        description="Expose POST /api/v1/auth/demo-token (404 when false)",
+    )
+    demo_token_ttl_seconds: int = Field(
+        default=1800, gt=0, description="Lifetime of an anonymous demo token"
+    )
+    demo_token_rate_per_minute: int = Field(
+        default=5, gt=0, description="Demo tokens issued per client IP per minute"
     )
 
     # --- Runtime ---

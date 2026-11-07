@@ -19,7 +19,7 @@ class ChatHistory(Base):  # pylint: disable=too-few-public-methods
 
     Attributes:
         id: Auto-incrementing primary key.
-        user_id: Identifies which user sent the message (links to user service).
+        user_id: The verified token subject ("sub" claim) of the sender.
         message: The raw text input from the user.
         ai_response: The text returned by the AI assistant.
         intent: Classified intent (e.g., "product_inquiry", "shipping_question").
@@ -30,7 +30,7 @@ class ChatHistory(Base):  # pylint: disable=too-few-public-methods
     __tablename__ = "chat_history"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, nullable=False, index=True)
+    user_id = Column(String(64), nullable=False, index=True)
     message = Column(Text, nullable=False)
     ai_response = Column(Text, nullable=False)
     intent = Column(String(100), nullable=True, index=True)

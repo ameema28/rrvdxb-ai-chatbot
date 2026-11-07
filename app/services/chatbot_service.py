@@ -231,7 +231,7 @@ def _build_system_prompt_for_intent(
 
 
 async def handle_chat_message(
-    user_id: Optional[int],
+    user_id: str,
     message: str,
     db: Session,
 ) -> ChatResponse:
@@ -261,8 +261,8 @@ async def handle_chat_message(
     step_times: List[Tuple[str, float]] = []
     step_started = time.perf_counter()
 
-    # Fallback for unauthenticated / anonymous users
-    effective_user_id = user_id if user_id is not None else 0
+    # user_id is the verified token subject (the route requires auth).
+    effective_user_id = user_id
 
     # ------------------------------------------------------------------
     # 1. Classify intent FIRST — decide the path before we build anything

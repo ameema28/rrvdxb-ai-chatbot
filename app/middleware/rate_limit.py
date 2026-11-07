@@ -8,8 +8,8 @@ WHY RATE LIMIT:
 
 WHY PER-USER:
   - A global limit lets one noisy user starve everyone else.
-  - Keying by X-User-Id gives fair independent budgets + a per-customer
-    abuse signal.
+  - Keying by the verified token subject ("sub") gives fair independent
+    budgets + a per-customer abuse signal.
 
 WHY THE STORE IS AN INTERFACE:
   - In-memory is correct for ONE dev process, but with N uvicorn workers each
@@ -150,19 +150,21 @@ rate_limit_store: RateLimitStore = InMemoryRateLimitStore()
 
 
 async def check_rate_limit(
-    user_id: int = Depends(get_current_user_id),
+    user_id: str = Depends(get_current_user_id),
 ) -> None:
     """
     FastAPI dependency: enforce the per-user budget before the handler runs.
 
     Because this depends on get_current_user_id, the resolution order is:
-      1. missing X-User-Id  -> AuthenticationError (401)
-      2. non-integer header -> ValidationError     (400)
-      3. over budget        -> RateLimitExceeded   (429)
-      4. otherwise          -> None (handler proceeds)
+      1. missing / invalid bearer token -> AuthenticationError (401)
+      2. over budget                    -> RateLimitExceeded   (429)
+      3. otherwise                      -> None (handler proceeds)
+
+    The key is the VERIFIED token subject, so a client cannot dodge the
+    limit by changing a header.
     """
     result = await rate_limit_store.allow_request(
-        key=str(user_id),
+        key=f"user:{user_id}",
         limit=RATE_LIMIT_LIMIT,
         window_seconds=RATE_LIMIT_WINDOW_SECONDS,
     )

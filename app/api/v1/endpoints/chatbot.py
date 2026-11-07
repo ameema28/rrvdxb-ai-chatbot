@@ -5,9 +5,9 @@ This module defines the HTTP interface for the AI shopping assistant.
 Business logic is delegated to the chatbot_service layer to keep
 routes thin and testable.
 
-Day 8 hardening:
-  - The endpoint is private: X-User-Id is REQUIRED (401 when missing,
-    400 when invalid) via get_current_user_id.
+Day 8 hardening (auth upgraded in Phase 2):
+  - The endpoint is private: an HS256 bearer token is REQUIRED (401 when
+    missing or invalid) via get_current_user_id; X-User-Id is ignored.
   - Per-user rate limiting (429) via the check_rate_limit dependency.
   - All errors flow to the centralized exception handlers — the route does
     NOT catch-and-silence; it only ever returns a ChatResponse or lets a
@@ -33,13 +33,13 @@ router = APIRouter()
     description=(
         "Receives a user message, processes it through the AI pipeline, "
         "and returns a contextual response with optional product "
-        "recommendations. Private endpoint: requires the X-User-Id header "
-        "(401/400) and is rate-limited to 20 requests per minute per user (429)."
+        "recommendations. Private endpoint: requires an HS256 bearer token "
+        "(401) and is rate-limited per verified user (429)."
     ),
 )
 async def chat(
     request: ChatRequest,
-    user_id: int = Depends(get_current_user_id),
+    user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
     _rate_limit_check: None = Depends(check_rate_limit),
 ) -> ChatResponse:
@@ -48,8 +48,7 @@ async def chat(
 
     Args:
         request: The chat payload containing the user's message.
-        user_id: Injected from the X-User-Id header (stub for now;
-                 JWT replaces it when the Auth API ships).
+        user_id: The verified "sub" claim of the bearer token.
         db: SQLAlchemy session injected per-request.
         _rate_limit_check: None — dependency only; enforces the per-user
             budget and raises RateLimitExceeded (429) when exhausted.

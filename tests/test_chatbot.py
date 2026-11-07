@@ -1,9 +1,9 @@
 """
 pytest suite for the chatbot endpoint and conversation memory.
 
-Day 8 adds auth + rate-limiting + error-handling coverage:
-  - Missing X-User-Id            -> 401 with the canonical error body
-  - Invalid X-User-Id ("abc")    -> 400 with the canonical error body
+Day 8 adds auth + rate-limiting + error-handling coverage (auth is an HS256
+bearer token since Phase 2; token edge cases live in test_auth.py):
+  - Missing bearer token         -> 401 with the canonical error body
   - Per-user rate limit exceeded -> 429 with the canonical error body
   - Unhandled internal error     -> 500 generic body, no traceback leaked
 
@@ -28,52 +28,15 @@ import asyncio
 import pytest
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.ai.chatbot.intent import IntentResult
-from app.core.database import Base
-from app.core.dependencies import get_db
-from app.middleware.rate_limit import RATE_LIMIT_LIMIT, rate_limit_store
+from app.middleware.rate_limit import RATE_LIMIT_LIMIT
 
 from app.models.chat_history import ChatHistory
+from tests.support import TestingSessionLocal, auth_headers
 
 client = TestClient(app)
-
-# --------------------------------------------------------------------------
-# In-memory SQLite DB for memory tests (isolated, fast, no file I/O)
-# --------------------------------------------------------------------------
-TEST_DATABASE_URL = "sqlite:///:memory:"
-
-test_engine = create_engine(
-    TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-
-Base.metadata.create_all(bind=test_engine)
-
-
-def override_get_db():
-    db = TestingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = override_get_db
-
-
-@pytest.fixture(autouse=True)
-def reset_rate_limit_store():
-    """Give every test a clean per-user budget (module-level store singleton)."""
-    rate_limit_store.reset()
-    yield
-    rate_limit_store.reset()
 
 
 def _mock_intent(intent: str = "general_chat", confidence: float = 1.0):
@@ -95,31 +58,16 @@ def _extract_history_arg(mock_call_args):
 # Day 8 — Auth, rate limiting, centralized error handling
 # ==========================================================================
 
-def test_chat_endpoint_requires_user_id_header():
-    """Missing X-User-Id -> 401 with the centralized error body."""
+def test_chat_endpoint_requires_bearer_token():
+    """No bearer token -> 401 with the centralized error body."""
     payload = {"message": "Test without auth"}
     response = client.post("/api/v1/ai/chat", json=payload)
     assert response.status_code == 401
     data = response.json()
     assert data == {
         "error": "Authentication required",
-        "detail": "X-User-Id header missing",
+        "detail": "Bearer token missing",
         "status_code": 401,
-    }
-
-
-def test_invalid_user_id_returns_400_standardized_body():
-    """Non-integer X-User-Id ('abc') -> 400 with the centralized body."""
-    payload = {"message": "Test with a bad user id"}
-    response = client.post(
-        "/api/v1/ai/chat", json=payload, headers={"X-User-Id": "abc"}
-    )
-    assert response.status_code == 400
-    data = response.json()
-    assert data == {
-        "error": "Validation error",
-        "detail": "X-User-Id must be an integer",
-        "status_code": 400,
     }
 
 
@@ -137,14 +85,14 @@ def test_rate_limit_exceeded_returns_429_standardized_body():
             ok = client.post(
                 "/api/v1/ai/chat",
                 json=payload,
-                headers={"X-User-Id": str(user_id)},
+                headers=auth_headers(user_id),
             )
             assert ok.status_code == 200, f"Expected 200, got {ok.status_code}"
 
         blocked = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": str(user_id)},
+            headers=auth_headers(user_id),
         )
 
     assert blocked.status_code == 429
@@ -160,7 +108,7 @@ def test_rate_limit_exceeded_returns_429_standardized_body():
         return_value=mock_reply,
     ), _mock_intent("general_chat"):
         other = client.post(
-            "/api/v1/ai/chat", json=payload, headers={"X-User-Id": "778"}
+            "/api/v1/ai/chat", json=payload, headers=auth_headers("778")
         )
     assert other.status_code == 200
 
@@ -181,7 +129,7 @@ def test_unhandled_error_returns_500_standardized_body():
         response = client.post(
             "/api/v1/ai/chat",
             json={"message": "trigger the internal error", "user_id": 999},
-            headers={"X-User-Id": "999"},
+            headers=auth_headers("999"),
         )
 
     assert response.status_code == 500
@@ -216,7 +164,7 @@ def test_memory_does_not_leak_between_users():
         first = client.post(
             "/api/v1/ai/chat",
             json={"message": a_message, "user_id": user_a},
-            headers={"X-User-Id": str(user_a)},
+            headers=auth_headers(user_a),
         )
         assert first.status_code == 200
         assert _extract_history_arg(mock_llm.call_args) == ""
@@ -229,7 +177,7 @@ def test_memory_does_not_leak_between_users():
         second = client.post(
             "/api/v1/ai/chat",
             json={"message": "hello", "user_id": user_b},
-            headers={"X-User-Id": str(user_b)},
+            headers=auth_headers(user_b),
         )
         assert second.status_code == 200
         history_b = _extract_history_arg(mock_llm_b.call_args)
@@ -244,15 +192,15 @@ def test_memory_does_not_leak_between_users():
         third = client.post(
             "/api/v1/ai/chat",
             json={"message": "under 500 AED", "user_id": user_a},
-            headers={"X-User-Id": str(user_a)},
+            headers=auth_headers(user_a),
         )
         assert third.status_code == 200
         history_a = _extract_history_arg(mock_llm_a.call_args)
         assert a_message in history_a
 
     db = TestingSessionLocal()
-    rows_a = db.query(ChatHistory).filter(ChatHistory.user_id == user_a).count()
-    rows_b = db.query(ChatHistory).filter(ChatHistory.user_id == user_b).count()
+    rows_a = db.query(ChatHistory).filter(ChatHistory.user_id == str(user_a)).count()
+    rows_b = db.query(ChatHistory).filter(ChatHistory.user_id == str(user_b)).count()
     db.close()
     assert rows_a == 2
     assert rows_b == 1
@@ -272,7 +220,7 @@ def test_track_order_help_uses_tracking_guidance_and_keeps_history():
         r1 = client.post(
             "/api/v1/ai/chat",
             json={"message": "track my order", "user_id": user_id},
-            headers={"X-User-Id": str(user_id)},
+            headers=auth_headers(user_id),
         )
         assert r1.status_code == 200
         assert r1.json()["intent"] == "track_order_help"
@@ -290,7 +238,7 @@ def test_track_order_help_uses_tracking_guidance_and_keeps_history():
         r2 = client.post(
             "/api/v1/ai/chat",
             json={"message": "where is it now?", "user_id": user_id},
-            headers={"X-User-Id": str(user_id)},
+            headers=auth_headers(user_id),
         )
         assert r2.status_code == 200
         history2 = _extract_history_arg(mock_llm2.call_args)
@@ -312,7 +260,7 @@ def test_general_chat_uses_standard_prompt_with_catalog():
         response = client.post(
             "/api/v1/ai/chat",
             json={"message": "hello", "user_id": 700},
-            headers={"X-User-Id": "700"},
+            headers=auth_headers("700"),
         )
     assert response.status_code == 200
     data = response.json()
@@ -364,7 +312,7 @@ def test_malformed_request_body_returns_canonical_400():
     response = client.post(
         "/api/v1/ai/chat",
         json={"message": ""},
-        headers={"X-User-Id": "1"},
+        headers=auth_headers("1"),
     )
     assert response.status_code == 400
     body = response.json()
@@ -399,7 +347,7 @@ def test_hallucinated_price_in_reply_is_replaced():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": str(user_id)},
+            headers=auth_headers(user_id),
         )
 
     assert response.status_code == 200
@@ -412,7 +360,7 @@ def test_hallucinated_price_in_reply_is_replaced():
     )
 
     db = TestingSessionLocal()
-    row = db.query(ChatHistory).filter(ChatHistory.user_id == user_id).one()
+    row = db.query(ChatHistory).filter(ChatHistory.user_id == str(user_id)).one()
     db.close()
     assert row.ai_response == data["reply"]
 
@@ -435,7 +383,7 @@ def test_grounded_price_from_faq_context_is_kept():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": "801"},
+            headers=auth_headers("801"),
         )
 
     assert response.status_code == 200
@@ -461,7 +409,7 @@ def test_chat_endpoint_responds_200():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": "1"},
+            headers=auth_headers("1"),
         )
 
     assert response.status_code == 200, f"Got {response.status_code}: {response.text}"
@@ -482,7 +430,7 @@ def test_chat_endpoint_falls_back_on_llm_error():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": "1"},
+            headers=auth_headers("1"),
         )
 
     assert response.status_code == 200
@@ -504,7 +452,7 @@ def test_conversation_memory_persists_across_turns():
         response1 = client.post(
             "/api/v1/ai/chat",
             json={"message": "I am looking for a gift", "user_id": user_id},
-            headers={"X-User-Id": str(user_id)},
+            headers=auth_headers(user_id),
         )
         assert response1.status_code == 200
         data1 = response1.json()
@@ -530,7 +478,7 @@ def test_conversation_memory_persists_across_turns():
         response2 = client.post(
             "/api/v1/ai/chat",
             json={"message": "Something under 500 AED", "user_id": user_id},
-            headers={"X-User-Id": str(user_id)},
+            headers=auth_headers(user_id),
         )
         assert response2.status_code == 200
         data2 = response2.json()
@@ -540,7 +488,7 @@ def test_conversation_memory_persists_across_turns():
         assert first_mock_reply in history_arg_2
 
     db = TestingSessionLocal()
-    rows = db.query(ChatHistory).filter(ChatHistory.user_id == user_id).all()
+    rows = db.query(ChatHistory).filter(ChatHistory.user_id == str(user_id)).all()
     db.close()
     assert len(rows) == 2
     assert rows[0].message == "I am looking for a gift"
@@ -560,12 +508,12 @@ def test_intent_is_saved_to_chat_history():
         response = client.post(
             "/api/v1/ai/chat",
             json={"message": "Show me today's deals", "user_id": user_id},
-            headers={"X-User-Id": str(user_id)},
+            headers=auth_headers(user_id),
         )
     assert response.status_code == 200
     assert response.json()["intent"] == "deal_inquiry"
     db = TestingSessionLocal()
-    row = db.query(ChatHistory).filter(ChatHistory.user_id == user_id).one()
+    row = db.query(ChatHistory).filter(ChatHistory.user_id == str(user_id)).one()
     db.close()
     assert row.intent == "deal_inquiry"
 
@@ -601,7 +549,7 @@ def test_product_faq_uses_retrieved_faq_context():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": "7"},
+            headers=auth_headers("7"),
         )
 
     assert response.status_code == 200
@@ -637,7 +585,7 @@ def test_product_faq_no_rag_match_falls_back_gracefully():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": "8"},
+            headers=auth_headers("8"),
         )
 
     assert response.status_code == 200
@@ -685,7 +633,7 @@ def test_recommend_product_populates_recommended_products():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": "11"},
+            headers=auth_headers("11"),
         )
 
     assert response.status_code == 200
@@ -714,7 +662,7 @@ def test_deal_inquiry_populates_deal():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": "12"},
+            headers=auth_headers("12"),
         )
 
     assert response.status_code == 200
@@ -740,7 +688,7 @@ def test_deal_inquiry_no_deal_falls_back_to_general():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": "13"},
+            headers=auth_headers("13"),
         )
 
     assert response.status_code == 200
@@ -760,7 +708,7 @@ def test_llm_timeout_returns_timeout_message_and_saves_general_chat():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": str(user_id)},
+            headers=auth_headers(user_id),
         )
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -770,7 +718,7 @@ def test_llm_timeout_returns_timeout_message_and_saves_general_chat():
     assert data["intent"] == "recommend_product"
 
     db = TestingSessionLocal()
-    row = db.query(ChatHistory).filter(ChatHistory.user_id == user_id).one()
+    row = db.query(ChatHistory).filter(ChatHistory.user_id == str(user_id)).one()
     db.close()
     # fallback turns are persisted with a VALID intent (general_chat)
     assert row.intent == "general_chat"
@@ -793,7 +741,7 @@ def test_api_reports_real_low_confidence_for_offtopic_chat():
         response = client.post(
             "/api/v1/ai/chat",
             json=payload,
-            headers={"X-User-Id": "15"},
+            headers=auth_headers("15"),
         )
 
     assert response.status_code == 200
@@ -818,7 +766,7 @@ def test_low_llm_confidence_switches_intent_but_keeps_real_value():
         response = client.post(
             "/api/v1/ai/chat",
             json={"message": "hmm maybe something cheaper"},
-            headers={"X-User-Id": "16"},
+            headers=auth_headers("16"),
         )
     assert response.status_code == 200
     data = response.json()
@@ -838,7 +786,7 @@ def test_classifier_error_reports_zero_confidence():
         response = client.post(
             "/api/v1/ai/chat",
             json={"message": "hmm maybe something cheaper"},
-            headers={"X-User-Id": "17"},
+            headers=auth_headers("17"),
         )
     assert response.status_code == 200
     data = response.json()

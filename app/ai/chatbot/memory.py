@@ -41,7 +41,7 @@ DEFAULT_HISTORY_LIMIT = 5
 
 def save_turn(
     db_session: Session,
-    user_id: int,
+    user_id: str,
     message: str,
     ai_response: str,
     intent: str | None = None,
@@ -74,7 +74,7 @@ def save_turn(
 
 def load_recent_history(
     db_session: Session,
-    user_id: int,
+    user_id: str,
     limit: int = DEFAULT_HISTORY_LIMIT,
 ) -> List[Dict[str, Any]]:
     """

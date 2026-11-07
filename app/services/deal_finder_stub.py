@@ -6,7 +6,7 @@ real service must match, with a deterministic local mock so deal_inquiry
 flows never block on an external service.
 
 Interface:
-    get_deals(user_id: int, message: str) -> dict | None
+    get_deals(user_id: str, message: str) -> dict | None
 
 When the real service lands, swap only the import in chatbot_service.py.
 """
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _DEAL_KEYWORDS = ("discount", "sale", "deal", "offer", "coupon", "promo")
 
 
-def get_deals(user_id: int, message: str) -> Optional[Dict[str, Any]]:
+def get_deals(user_id: str, message: str) -> Optional[Dict[str, Any]]:
     """
     Return a mock deal dict when the message mentions deals, else None.
 

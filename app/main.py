@@ -16,6 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import Base, engine
+from app.core.security import validate_security_settings
 from app.middleware.error_handler import (
     AppError,
     UnhandledErrorMiddleware,
@@ -57,7 +58,13 @@ def create_application() -> FastAPI:
 
     Using a factory makes testing easier because we can create
     isolated app instances with overridden dependencies.
+
+    Raises:
+        RuntimeError: INTERNAL_JWT_SECRET shorter than 32 characters outside
+            APP_ENV=test (the app refuses to start).
     """
+    validate_security_settings()
+
     application = FastAPI(
         title=settings.app_name,
         description="AI-powered shopping assistant for RRVDXB premium e-commerce.",
