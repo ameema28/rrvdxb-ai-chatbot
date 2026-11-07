@@ -11,8 +11,9 @@ This layer sits between the API route and the AI client. It handles:
     inside one total request budget, each in a worker thread (Phase 2)
   - Persisting the new turn (with intent) to chat_history
   - Returning a structured ChatResponse
-  - Post-generation hallucination guard: any currency figure in the LLM reply
-    that was NOT present in the injected context is replaced (Day 9)
+  - Post-generation price guard: the reply is replaced if a currency figure
+    is not in the injected context, or if a figure attached to a named
+    catalog product is not that product's price (price_guard.py)
 """
 
 import asyncio
@@ -20,9 +21,8 @@ import functools
 import json
 import logging
 import os
-import re
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -33,6 +33,7 @@ from app.ai.chatbot.memory import (
     load_recent_history,
     save_turn,
 )
+from app.ai.chatbot.price_guard import build_catalog, validate_reply_prices
 from app.ai.chatbot.prompts import SYSTEM_PROMPT, build_rag_system_prompt
 from app.ai.chatbot.rag.retriever import retrieve_faq_context
 from app.core.config import settings
@@ -64,92 +65,9 @@ _TIMEOUT_REPLY = "I'm taking longer than usual. Please try again in a moment."
 # sent back in ChatResponse for observability.
 _FALLBACK_PERSIST_INTENT = "general_chat"
 
-# --------------------------------------------------------------------------
-# Day 9 — post-generation hallucination guard
-# --------------------------------------------------------------------------
-# Why it exists: guardrails in the system prompt ("NEVER invent prices") are
-# instructions, not enforcement. If the model ignores them, the customer sees
-# a fabricated figure. This guard MECHANICALLY enforces price honesty:
-#   1. Collect every currency figure the model actually SAW this turn:
-#      the injected context (FAQ chunks / catalog / recommendations / deal),
-#      the user's own message (they may quote a budget), and the history.
-#   2. Extract every currency figure from the LLM's reply.
-#   3. Any reply figure not in the allowlist is an invention -> the whole
-#      reply is replaced with a safe message and the incident is logged.
-# The replacement happens BEFORE persistence, so hallucinated text never
-# reaches the DB (and thus never poisons the next turn's memory).
-# Residual risk: a figure repeated from a PREVIOUS turn's (pre-guard)
-# hallucination lives in history and would be allowed — acceptable, since
-# guarded turns never write such text going forward.
-# --------------------------------------------------------------------------
-
-# Matches both "4,699 AED" (number first) and "AED 6,499" (currency first),
-# tolerating commas, decimals, and dash/space separators.
-_PRICE_PATTERN = re.compile(
-    r"\b(?:(AED|USD|SAR|GBP)[\s-]*(\d[\d,]*(?:\.\d+)?)"
-    r"|(\d[\d,]*(?:\.\d+)?)[\s-]*(AED|USD|SAR|GBP))\b",
-    re.IGNORECASE,
-)
-
-# The safe message sent to the customer when the guard trips. It quotes NO
-# figure itself (that would defeat the purpose) and stays in Sara's voice.
-_HALLUCINATION_GUARD_REPLY = (
-    "Let me double-check that exact figure for you — I don't want to quote "
-    "anything that isn't accurate. One moment, please."
-)
-
-
-def _extract_price_figures(text: str) -> Set[str]:
-    """
-    Return the normalized currency figures found in text.
-
-    Normalization strips thousand-separators and decimal tails so that
-    "4,699.00 AED" (catalog format) equals "4,699 AED" (reply format):
-    both become {"4699 AED"}.
-    """
-    figures: Set[str] = set()
-    for match in _PRICE_PATTERN.finditer(text):
-        if match.group(1):
-            currency, number = match.group(1), match.group(2)
-        else:
-            currency, number = match.group(4), match.group(3)
-        number = number.replace(",", "").split(".")[0]
-        figures.add(f"{number} {currency.upper()}")
-    return figures
-
-
-def _validate_prices_against_grounding(
-    reply: str,
-    grounded_texts: List[str],
-    user_message: str,
-    history: str,
-) -> Tuple[str, Set[str]]:
-    """
-    Check every price figure in the reply against the figures the model saw.
-
-    Args:
-        reply: The raw LLM reply.
-        grounded_texts: Every context block injected into this turn's prompt
-            (system prompt incl. RAG FAQ block, catalog/recommendation/deal
-            context). Empty strings are ignored.
-        user_message: The customer's message (they may quote their own budget).
-        history: Formatted prior turns (memory can legitimately repeat figures).
-
-    Returns:
-        (safe_reply, ungrounded_figures). If any reply figure is ungrounded,
-        safe_reply is _HALLUCINATION_GUARD_REPLY and the set lists the
-        invented figures; otherwise the original reply and an empty set.
-    """
-    allowed: Set[str] = set()
-    for text in grounded_texts:
-        allowed |= _extract_price_figures(text)
-    allowed |= _extract_price_figures(user_message)
-    allowed |= _extract_price_figures(history)
-
-    ungrounded = _extract_price_figures(reply) - allowed
-    if ungrounded:
-        return _HALLUCINATION_GUARD_REPLY, ungrounded
-    return reply, set()
+# Post-generation price guard: see app/ai/chatbot/price_guard.py for both
+# checks (grounding + per-product) and their documented limits. It runs
+# BEFORE persistence, so a replaced reply never reaches the DB or memory.
 
 
 async def _run_bounded(func: Any, timeout: float) -> Any:
@@ -253,7 +171,7 @@ async def handle_chat_message(
 
     Day 4-6 flow maintained; Day 7 adds per-intent blocks for
     recommend_product and deal_inquiry, plus a hard LLM timeout.
-    Day 9 adds the post-generation hallucination guard (step 5b).
+    Day 9 adds the post-generation price guard (step 5b).
 
     Steps:
     - 1 Classify intent (regex fast-path, else LLM).
@@ -266,7 +184,8 @@ async def handle_chat_message(
         track_order_help / general_chat → intent router
     - 5 Call the Groq LLM in a worker thread with a hard timeout.
     - 5b Validate every price figure in the reply against the injected
-        context; replace the reply if any figure was invented.
+        context and against the named product's catalog price; replace the
+        reply if either check fails.
     - 6 Persist the turn (fallback turns persist as general_chat).
     - 7 Return ChatResponse (reply, recommended_products, deal, intent).
     """
@@ -457,14 +376,14 @@ async def handle_chat_message(
     step_times.append(("llm", time.perf_counter() - llm_started))
 
     # ------------------------------------------------------------------
-    # 5b. Day 9 — hallucination guard (MUST run before persistence so the
+    # 5b. Day 9 — price guard (MUST run before persistence so the
     #     DB and the next turn's memory never see an invented figure).
     #     The allowlist is everything the model saw this turn: the system
     #     prompt (incl. any RAG FAQ block via system_prompt_override), the
     #     injected catalog/recommendation/deal context, the customer's own
     #     message (they may quote a budget), and the conversation history.
     # ------------------------------------------------------------------
-    reply, ungrounded_figures = _validate_prices_against_grounding(
+    guard = validate_reply_prices(
         reply=reply,
         grounded_texts=[
             text
@@ -473,14 +392,17 @@ async def handle_chat_message(
         ],
         user_message=message,
         history=history_string,
+        catalog=build_catalog(products),
     )
-    if ungrounded_figures:
+    if guard.tripped:
         logger.warning(
-            "Hallucination guard: reply quoted %s without any grounding "
-            "(intent=%s) — reply replaced with the safety message",
-            sorted(ungrounded_figures),
+            "Price guard: ungrounded=%s product_mismatches=%s (intent=%s) "
+            "— reply replaced with the safety message",
+            sorted(guard.ungrounded),
+            guard.mismatched,
             intent,
         )
+    reply = guard.reply
 
     # ------------------------------------------------------------------
     # 6. Persist the new turn.
