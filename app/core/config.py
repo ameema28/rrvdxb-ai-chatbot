@@ -16,10 +16,8 @@ class Settings(BaseSettings):
     Attributes:
         app_name: Human-readable app name (useful for logging/docs).
         database_url: SQLAlchemy connection string. SQLite for local dev.
-        llm_provider: Which LLM provider to use ('openai' or 'groq').
-        openai_api_key: Secret key for OpenAI API calls.
-        groq_api_key: Secret key for Groq API calls.
-        llm_model: Model name to use with the chosen provider.
+        groq_api_key: Secret key for Groq API calls (Groq is the only provider).
+        llm_model: Groq model name.
         internal_jwt_secret: Used for signing/verifying internal service tokens.
         debug: Enables FastAPI debug mode and verbose logging.
         rate_limit_per_minute: Per-user chat request budget (sliding window).
@@ -34,24 +32,14 @@ class Settings(BaseSettings):
         description="SQLAlchemy DB URI — SQLite for local development",
     )
 
-    # --- LLM Provider selection ---
-    llm_provider: str = Field(
-        default="groq",
-        description="LLM provider: 'openai' or 'groq'",
-    )
+    # --- LLM (Groq only) ---
     llm_model: str = Field(
         default="llama-3.1-8b-instant",
-        description="Model name for the chosen provider",
-    )
-
-    # --- API Keys (at least one must be set depending on provider) ---
-    openai_api_key: str = Field(
-        default="",
-        description="OpenAI API key — required if LLM_PROVIDER=openai",
+        description="Groq model name",
     )
     groq_api_key: str = Field(
         default="",
-        description="Groq API key — required if LLM_PROVIDER=groq",
+        description="Groq API key (without it every reply is the fallback text)",
     )
 
     # --- Security ---
