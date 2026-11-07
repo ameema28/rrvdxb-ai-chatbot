@@ -13,6 +13,11 @@ os.environ["APP_ENV"] = "test"
 os.environ["INTERNAL_JWT_SECRET"] = "test-secret-" + "x" * 28
 os.environ.pop("GROQ_API_KEY", None)
 os.environ.pop("DEMO_TOKENS_ENABLED", None)
+os.environ.pop("TRUST_PROXY", None)
+os.environ.pop("TRUST_PROXY_HOPS", None)
+# Every TestClient request comes from one IP; a high per-IP chat cap keeps
+# multi-user tests independent. tests/test_client_ip.py lowers it explicitly.
+os.environ["CHAT_IP_RATE_PER_MINUTE"] = "1000"
 
 import pytest  # noqa: E402
 

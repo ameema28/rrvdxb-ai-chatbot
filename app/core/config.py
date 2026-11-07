@@ -104,6 +104,22 @@ class Settings(BaseSettings):
         default=20,
         description="Per-user chat request budget per minute (sliding window)",
     )
+    chat_ip_rate_per_minute: int = Field(
+        default=20,
+        gt=0,
+        description="Chat requests per client IP per minute, on top of the per-user limit",
+    )
+
+    # --- Client IP behind a reverse proxy ---
+    trust_proxy: bool = Field(
+        default=False,
+        description="Take the client IP from X-Forwarded-For (only behind a proxy that appends it)",
+    )
+    trust_proxy_hops: int = Field(
+        default=1,
+        ge=1,
+        description="With trust_proxy: use the X-Forwarded-For entry this many places from the right",
+    )
 
     # Pydantic v2: use SettingsConfigDict instead of nested class Config
     model_config = SettingsConfigDict(

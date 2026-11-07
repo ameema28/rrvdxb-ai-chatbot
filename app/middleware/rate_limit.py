@@ -23,14 +23,16 @@ IMPLEMENTATION:
   than `limit` remain, else deny -> RateLimitExceeded (429).
 """
 
+import logging
 import threading
 import time
 from abc import ABC, abstractmethod
 from collections import deque
 from typing import Deque, Dict
 
-from fastapi import Depends
+from fastapi import Depends, Request
 
+from app.core.client_ip import client_ip
 from app.core.config import settings
 from app.core.dependencies import get_current_user_id
 from app.middleware.error_handler import RateLimitExceeded
@@ -42,6 +44,8 @@ from app.middleware.error_handler import RateLimitExceeded
 # requires a restart (same as any env-var configuration).
 RATE_LIMIT_LIMIT: int = settings.rate_limit_per_minute  # requests per user per window
 RATE_LIMIT_WINDOW_SECONDS: float = 60.0  # sliding-window length for 1 minute
+
+logger = logging.getLogger(__name__)
 
 
 class RateLimitResult:
@@ -150,18 +154,22 @@ rate_limit_store: RateLimitStore = InMemoryRateLimitStore()
 
 
 async def check_rate_limit(
+    request: Request,
     user_id: str = Depends(get_current_user_id),
 ) -> None:
     """
-    FastAPI dependency: enforce the per-user budget before the handler runs.
+    FastAPI dependency: enforce the chat budgets before the handler runs.
 
     Because this depends on get_current_user_id, the resolution order is:
-      1. missing / invalid bearer token -> AuthenticationError (401)
-      2. over budget                    -> RateLimitExceeded   (429)
-      3. otherwise                      -> None (handler proceeds)
+      1. missing / invalid bearer token  -> AuthenticationError (401)
+      2. over the per-user budget        -> RateLimitExceeded   (429)
+      3. over the per-client-IP budget   -> RateLimitExceeded   (429)
+      4. otherwise                       -> None (handler proceeds)
 
-    The key is the VERIFIED token subject, so a client cannot dodge the
-    limit by changing a header.
+    The per-user key is the VERIFIED token subject, so a client cannot dodge
+    it by changing a header. The per-IP cap (CHAT_IP_RATE_PER_MINUTE) stops
+    one client from multiplying its budget by rotating demo tokens; the IP
+    is proxy-aware (app/core/client_ip.py).
     """
     result = await rate_limit_store.allow_request(
         key=f"user:{user_id}",
@@ -171,5 +179,18 @@ async def check_rate_limit(
     if not result.allowed:
         raise RateLimitExceeded(
             detail=f"{RATE_LIMIT_LIMIT} requests per minute allowed"
+        )
+
+    ip = client_ip(request)
+    ip_limit = settings.chat_ip_rate_per_minute
+    ip_result = await rate_limit_store.allow_request(
+        key=f"chat-ip:{ip}",
+        limit=ip_limit,
+        window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+    )
+    if not ip_result.allowed:
+        logger.warning("Rate limit exceeded for client IP %s", ip)
+        raise RateLimitExceeded(
+            detail=f"{ip_limit} requests per minute allowed per client IP"
         )
     return None
