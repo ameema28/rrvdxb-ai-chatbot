@@ -776,10 +776,10 @@ def test_llm_timeout_returns_timeout_message_and_saves_general_chat():
     assert row.intent == "general_chat"
 
 
-def test_api_surfaces_floor_confidence_for_offtopic_chat():
+def test_api_reports_real_low_confidence_for_offtopic_chat():
     """
-    Off-topic query -> LLM reports ~0.1; the API response should surface the
-    fallback floor (0.9) without changing intent-level confidence behavior.
+    Off-topic query -> the classifier reports 0.1; the API returns exactly
+    0.1 (no presentation floor) with the general_chat intent.
     """
     payload = {"message": "what is the meaning of life?", "user_id": 15}
     mock_reply = (
@@ -799,4 +799,48 @@ def test_api_surfaces_floor_confidence_for_offtopic_chat():
     assert response.status_code == 200
     data = response.json()
     assert data["intent"] == "general_chat"
-    assert data["confidence"] >= 0.7
+    assert data["confidence"] == 0.1
+
+
+def test_low_llm_confidence_switches_intent_but_keeps_real_value():
+    """
+    Real classify_intent (LLM mocked): a 0.4 deal_inquiry label is below the
+    0.7 threshold, so the intent becomes general_chat while the reported
+    confidence stays 0.4.
+    """
+    with patch(
+        "app.ai.chatbot.intent.send_chat_message",
+        return_value='{"intent": "deal_inquiry", "confidence": 0.4}',
+    ), patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value="Happy to help with your shopping!",
+    ):
+        response = client.post(
+            "/api/v1/ai/chat",
+            json={"message": "hmm maybe something cheaper"},
+            headers={"X-User-Id": "16"},
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["intent"] == "general_chat"
+    assert data["confidence"] == 0.4
+
+
+def test_classifier_error_reports_zero_confidence():
+    """When the intent LLM fails, the API reports general_chat with 0.0."""
+    with patch(
+        "app.ai.chatbot.intent.send_chat_message",
+        side_effect=RuntimeError("classifier down"),
+    ), patch(
+        "app.services.chatbot_service.send_chat_message",
+        return_value="Happy to help with your shopping!",
+    ):
+        response = client.post(
+            "/api/v1/ai/chat",
+            json={"message": "hmm maybe something cheaper"},
+            headers={"X-User-Id": "17"},
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["intent"] == "general_chat"
+    assert data["confidence"] == 0.0

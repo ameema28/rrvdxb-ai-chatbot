@@ -63,12 +63,6 @@ _TIMEOUT_REPLY = "I'm taking longer than usual. Please try again in a moment."
 # sent back in ChatResponse for observability.
 _FALLBACK_PERSIST_INTENT = "general_chat"
 
-# Day 7 — API-only presentation of confidence. The intent layer intentionally
-# keeps the LLM's honest low confidence (see test_intent.py), so the DB still
-# records the raw value; only ChatResponse reads this floor.
-_CONFIDENCE_THRESHOLD: float = 0.7
-_FALLBACK_CONFIDENCE: float = 0.9
-
 # --------------------------------------------------------------------------
 # Day 9 — post-generation hallucination guard
 # --------------------------------------------------------------------------
@@ -473,18 +467,14 @@ async def handle_chat_message(
     for name, dur in step_times:
         logger.info("%s step took %.3fs", name, dur)
 
-    # API presentation only: fold sub-threshold confidence into the
-    # fallback's value. The intent layer keeps the raw LLM figure (and so
-    # does the DB); only ChatResponse reads the floor.
-    display_confidence = (
-        _FALLBACK_CONFIDENCE
-        if intent_result.confidence < _CONFIDENCE_THRESHOLD
-        else intent_result.confidence
-    )
+    # The real classifier confidence is reported as-is. Below the 0.7
+    # threshold the intent layer has already switched the intent to
+    # general_chat; the confidence stays the honest (low) value, and 0.0
+    # means classification failed or timed out.
     return ChatResponse(
         reply=reply,
         recommended_products=recommended_products or None,
         deal=deal,
         intent=intent,
-        confidence=display_confidence,
+        confidence=intent_result.confidence,
     )
