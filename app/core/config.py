@@ -24,7 +24,7 @@ class Settings(BaseSettings):
         internal_jwt_secret: HS256 secret used to sign and verify bearer tokens.
         jwt_issuer / jwt_audience: Required 'iss' / 'aud' claim values.
         demo_tokens_enabled: Opt-in anonymous demo-token endpoint.
-        debug: Enables FastAPI debug mode and verbose logging.
+        debug: Enables FastAPI debug mode (SQL echo is always off).
         rate_limit_per_minute: Per-user chat request budget (sliding window).
     """
 
@@ -47,8 +47,8 @@ class Settings(BaseSettings):
         default="llama-3.1-8b-instant",
         description="Groq model name",
     )
-    groq_api_key: str = Field(
-        default="",
+    groq_api_key: SecretStr = Field(
+        default=SecretStr(""),
         description="Groq API key (without it every reply is the fallback text)",
     )
 

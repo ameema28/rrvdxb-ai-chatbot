@@ -157,12 +157,20 @@ def _parse_intent_json(raw: str) -> IntentResult:
 
     # Guard against the model returning a JSON array/string/number, not an object
     if not isinstance(data, dict):
-        logger.warning("Intent classifier returned non-object JSON: %r", text[:120])
+        # Log the shape only: the raw model output can echo the user's message.
+        logger.warning(
+            "Intent classifier returned non-object JSON (%s, %d chars)",
+            type(data).__name__,
+            len(text),
+        )
         raise ValueError("Expected JSON object from intent classifier")
 
     intent = data.get("intent")
     if intent not in VALID_INTENTS:
-        logger.warning("Intent classifier returned unknown intent: %r", intent)
+        logger.warning(
+            "Intent classifier returned an unknown intent value (%s)",
+            type(intent).__name__,
+        )
         raise ValueError(f"Unknown intent: {intent!r}")
 
     # Confidence: coerce to float (handles "0.85" strings), then clamp [0,1]
@@ -205,11 +213,11 @@ def classify_intent(user_message: str) -> IntentResult:
         result = _parse_intent_json(raw)
     except Exception as exc:
         # Covers API timeout/rate-limit/auth errors, malformed JSON, unknown
-        # intents, invalid confidence. Never log the API key — only the error.
+        # intents, invalid confidence. Only the exception TYPE is logged: its
+        # text can carry model output (user content) or provider details.
         logger.warning(
-            "Intent classification failed (%s: %s) — falling back to general_chat",
+            "Intent classification failed (%s) — falling back to general_chat",
             type(exc).__name__,
-            exc,
         )
         return IntentResult(intent="general_chat", confidence=0.0, entities={})
 

@@ -36,8 +36,9 @@ def make_engine(url: str) -> Engine:
     Create an engine for `url`.
 
     SQLite: check_same_thread=False lets FastAPI's worker threads share
-    connections. echo stays False: SQL echo logs bound parameters, which
-    would put raw user messages into the logs.
+    connections. Privacy: echo stays False and hide_parameters=True, so bound
+    values (raw user messages and replies) never appear in SQL logs or in DB
+    error messages, even if someone enables sqlalchemy.engine logging.
     """
     url = normalize_database_url(url)
     is_sqlite = url.startswith("sqlite")
@@ -46,6 +47,7 @@ def make_engine(url: str) -> Engine:
         connect_args={"check_same_thread": False} if is_sqlite else {},
         pool_pre_ping=not is_sqlite,
         echo=False,
+        hide_parameters=True,
     )
 
 

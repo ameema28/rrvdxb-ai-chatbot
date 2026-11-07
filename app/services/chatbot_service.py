@@ -219,10 +219,10 @@ async def handle_chat_message(
         intent_result = IntentResult(intent="general_chat", confidence=0.0, entities={})
     intent = intent_result.intent
     logger.debug(
-        "Classified intent=%s (confidence=%.2f) for message=%r",
+        "Classified intent=%s (confidence=%.2f) for message_chars=%d",
         intent,
         intent_result.confidence,
-        message[:80],
+        len(message),
     )
     step_times.append(("intent", time.perf_counter() - step_started))
 
@@ -270,16 +270,16 @@ async def handle_chat_message(
             faq_chunks = []
         if faq_chunks:
             logger.info(
-                "RAG: retrieved %d FAQ chunk(s) for message=%r",
+                "RAG: retrieved %d FAQ chunk(s) for message_chars=%d",
                 len(faq_chunks),
-                message[:80],
+                len(message),
             )
             system_prompt_override = build_rag_system_prompt(faq_chunks)
             system_prompt, context = SYSTEM_PROMPT, ""
         else:
             logger.info(
-                "RAG: no FAQ match for message=%r — graceful fallback",
-                message[:80],
+                "RAG: no FAQ match for message_chars=%d — graceful fallback",
+                len(message),
             )
             system_prompt, context = (
                 SYSTEM_PROMPT + _NO_FAQ_MATCH_NOTE,
@@ -297,14 +297,14 @@ async def handle_chat_message(
                 "",
             )
             logger.info(
-                "recommend_product: %d recommendation(s) for message=%r",
+                "recommend_product: %d recommendation(s) for message_chars=%d",
                 len(recommendations),
-                message[:80],
+                len(message),
             )
         else:
             logger.info(
-                "recommend_product: no stub matches for message=%r — catalog fallback",
-                message[:80],
+                "recommend_product: no stub matches for message_chars=%d — catalog fallback",
+                len(message),
             )
             system_prompt, context = SYSTEM_PROMPT, product_context
 
@@ -321,12 +321,12 @@ async def handle_chat_message(
                 "",
             )
             logger.info(
-                "deal_inquiry: deal matched for message=%r",
-                message[:80],
+                "deal_inquiry: deal matched for message_chars=%d",
+                len(message),
             )
         else:
             logger.info(
-                "deal_inquiry: no deal for message=%r — general flow", message[:80]
+                "deal_inquiry: no deal for message_chars=%d — general flow", len(message)
             )
             system_prompt, context = SYSTEM_PROMPT, product_context
 

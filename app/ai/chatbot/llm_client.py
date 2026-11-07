@@ -32,7 +32,8 @@ def _get_groq_client() -> Groq:
     """Return the cached Groq client, creating it if necessary."""
     global _groq_client
     if _groq_client is None:
-        if not settings.groq_api_key:
+        api_key = settings.groq_api_key.get_secret_value()
+        if not api_key:
             raise RuntimeError(
                 "GROQ_API_KEY is not set. Please configure it in your .env file."
             )
@@ -40,7 +41,7 @@ def _get_groq_client() -> Groq:
         # (asyncio.wait_for cannot kill its worker thread) still ends within
         # llm_timeout_seconds instead of retrying in the background.
         _groq_client = Groq(
-            api_key=settings.groq_api_key,
+            api_key=api_key,
             timeout=settings.llm_timeout_seconds,
             max_retries=0,
         )
@@ -114,9 +115,14 @@ def send_chat_message(
     except Exception as exc:
         # Groq SDK raises various exceptions (AuthenticationError, RateLimitError,
         # APIConnectionError, APIError, APITimeoutError). We catch them all,
-        # log the technical details, and raise a user-friendly RuntimeError.
-        logger.error("Groq API call failed (%s): %s", type(exc).__name__, exc)
-        raise RuntimeError("AI service is temporarily unavailable. Please try again.") from exc
+        # log only the type and HTTP status (the exception text may echo
+        # request details or key fragments), and raise a generic RuntimeError.
+        logger.error(
+            "Groq API call failed (%s, status=%s)",
+            type(exc).__name__,
+            getattr(exc, "status_code", None),
+        )
+        raise RuntimeError("AI service is temporarily unavailable. Please try again.") from None
 
     # Extract the assistant's reply. choices[0] is safe because we use n=1 (default).
     reply = completion.choices[0].message.content

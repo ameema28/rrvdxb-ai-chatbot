@@ -67,9 +67,8 @@ def retrieve_faq_context(
         candidates = search_faqs(query, top_k=k)
     except Exception as exc:
         logger.warning(
-            "retrieve_faq_context: search failed (%s: %s) — returning no context",
+            "retrieve_faq_context: search failed (%s) — returning no context",
             type(exc).__name__,
-            exc,
         )
         return []
 
@@ -87,8 +86,8 @@ def retrieve_faq_context(
 
     if not filtered:
         logger.info(
-            "retrieve_faq_context: no chunks met threshold %.2f for query=%r",
+            "retrieve_faq_context: no chunks met threshold %.2f for query_chars=%d",
             similarity_threshold,
-            query[:80],
+            len(query),
         )
     return filtered

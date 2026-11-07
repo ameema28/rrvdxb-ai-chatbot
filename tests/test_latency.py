@@ -11,6 +11,7 @@ import time
 from unittest.mock import patch
 
 import pytest
+from pydantic import SecretStr
 
 from app.ai.chatbot import llm_client
 from app.ai.chatbot.intent import IntentResult
@@ -137,7 +138,7 @@ def test_spent_budget_skips_the_reply_call(monkeypatch):
 
 def test_groq_client_has_timeout_and_no_retries(monkeypatch):
     monkeypatch.setattr(llm_client, "_groq_client", None)
-    monkeypatch.setattr(settings, "groq_api_key", "fake-test-key")
+    monkeypatch.setattr(settings, "groq_api_key", SecretStr("fake-test-key"))
     with patch("app.ai.chatbot.llm_client.Groq") as groq_cls:
         llm_client._get_groq_client()
     kwargs = groq_cls.call_args.kwargs
