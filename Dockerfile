@@ -32,6 +32,19 @@ RUN useradd --create-home --uid 1000 user \
  && mkdir -p /home/user/data \
  && chown user:user /home/user/data
 
+USER user
+ENV HOME=/home/user \
+    HF_HOME=/home/user/.cache/huggingface
+
+# Layer 3: the embedding model, downloaded before any app code is copied, so
+# code changes do not repeat the download.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
+USER root
+
 # Application code is owned by root, so the runtime user can only read it.
 COPY --chown=root:root app ./app
 COPY --chown=root:root scripts/build_vector_store.py ./scripts/build_vector_store.py
@@ -42,17 +55,13 @@ RUN mkdir -p /app/app/ai/chatbot/rag/chroma_db \
  && chown user:user /app/app/ai/chatbot/rag/chroma_db
 
 USER user
-ENV HOME=/home/user \
-    HF_HOME=/home/user/.cache/huggingface
 
-# Download the embedding model and build the FAQ index (12 chunks) at build time.
+# Build the FAQ index (12 chunks) offline, from the cached model.
 RUN python scripts/build_vector_store.py
 
 # Runtime defaults. Without DATABASE_URL, chat history is SQLite in /tmp, which
 # is reset whenever the container restarts. Demo tokens stay off unless enabled.
-ENV HF_HUB_OFFLINE=1 \
-    TRANSFORMERS_OFFLINE=1 \
-    PORT=8080 \
+ENV PORT=8080 \
     APP_ENV=production \
     DEBUG=false \
     DATABASE_URL=sqlite:////tmp/rrvdxb.db \
