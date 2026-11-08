@@ -112,6 +112,37 @@ def test_groq_error_text_with_key_characters_is_not_logged(caplog, monkeypatch):
     assert "Groq API call failed (Exception, status=None)" in caplog.text
 
 
+def test_deal_stub_does_not_log_the_user_id(caplog):
+    from app.services.deal_finder_stub import get_deals
+
+    caplog.set_level(logging.DEBUG)
+    assert get_deals("demo-PRIVSUBJECT", "any deals?") is not None
+    assert "deal matched" in caplog.text
+    assert "PRIVSUBJECT" not in caplog.text
+
+
+def test_missing_key_message_does_not_point_to_a_dotenv_file(monkeypatch):
+    monkeypatch.setattr(settings, "groq_api_key", SecretStr(""))
+    monkeypatch.setattr(llm_client, "_groq_client", None)
+    with pytest.raises(RuntimeError, match=r"^GROQ_API_KEY is not set$"):
+        llm_client.send_chat_message("sys", "hi", "")
+
+
+def test_temperature_and_max_tokens_reach_the_groq_call(monkeypatch):
+    fake = MagicMock()
+    fake.chat.completions.create.return_value.choices = [MagicMock()]
+    fake.chat.completions.create.return_value.choices[0].message.content = "{}"
+    monkeypatch.setattr(llm_client, "_groq_client", fake)
+    llm_client.send_chat_message("sys", "hi", "", temperature=0.0, max_tokens=150)
+    kwargs = fake.chat.completions.create.call_args.kwargs
+    assert kwargs["temperature"] == 0.0
+    assert kwargs["max_tokens"] == 150
+    llm_client.send_chat_message("sys", "hi", "")
+    kwargs = fake.chat.completions.create.call_args.kwargs
+    assert (kwargs["temperature"], kwargs["max_tokens"]) == (0.7, 500)
+    monkeypatch.setattr(llm_client, "_groq_client", None)
+
+
 @pytest.mark.parametrize("token", ["not-a-jwt-PRIVTOKEN", make_token("u1", exp_delta=-10)])
 def test_rejected_tokens_are_not_logged(caplog, token):
     caplog.set_level(logging.DEBUG)

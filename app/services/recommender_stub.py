@@ -15,28 +15,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-#: Product IDs shipped in the mock catalog (used by the intent classifiers).
-VALID_PRODUCT_IDS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-
-#: Candidate locations for the mock product catalog, tried in order.
-_CANDIDATE_PATHS: tuple[Path, ...] = (
-    Path(__file__).resolve().parents[2] / "mock_data" / "products.json",
-    Path(__file__).resolve().parents[1] / "mock_data" / "products.json",
-    Path("mock_data") / "products.json",
-    Path("products.json"),
-)
-
-
-def _find_products_file() -> Path | None:
-    """Return the first existing catalog path, or None."""
-    for candidate in _CANDIDATE_PATHS:
-        try:
-            resolved = candidate.resolve()
-        except OSError:
-            continue
-        if resolved.is_file():
-            return resolved
-    return None
+#: The mock product catalog (app/mock_data/products.json).
+_PRODUCTS_FILE = Path(__file__).resolve().parents[1] / "mock_data" / "products.json"
 
 
 def _load_products() -> list[dict[str, Any]]:
@@ -46,15 +26,10 @@ def _load_products() -> list[dict[str, Any]]:
     chatbot always has something safe to render; this never raises into the
     request path.
     """
-    products_file = _find_products_file()
-    if products_file is None:
-        logger.warning("product catalog not found; tried %s", _CANDIDATE_PATHS)
-        return []
-
     try:
-        payload = json.loads(products_file.read_text(encoding="utf-8"))
+        payload = json.loads(_PRODUCTS_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        logger.warning("could not load product catalog: %r", products_file)
+        logger.warning("could not load product catalog: %s", _PRODUCTS_FILE)
         return []
 
     products = payload if isinstance(payload, list) else payload.get("products", [])

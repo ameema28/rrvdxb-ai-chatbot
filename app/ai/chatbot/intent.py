@@ -209,6 +209,8 @@ def classify_intent(user_message: str) -> IntentResult:
             user_message=user_message,
             product_context="",  # intent classification needs no catalog
             history="",          # each message is classified independently
+            temperature=0.0,     # same label for the same message
+            max_tokens=150,      # one small JSON object
         )
         result = _parse_intent_json(raw)
     except Exception as exc:

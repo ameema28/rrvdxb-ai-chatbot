@@ -34,9 +34,7 @@ def _get_groq_client() -> Groq:
     if _groq_client is None:
         api_key = settings.groq_api_key.get_secret_value()
         if not api_key:
-            raise RuntimeError(
-                "GROQ_API_KEY is not set. Please configure it in your .env file."
-            )
+            raise RuntimeError("GROQ_API_KEY is not set")
         # timeout + max_retries=0: a call abandoned by the request budget
         # (asyncio.wait_for cannot kill its worker thread) still ends within
         # llm_timeout_seconds instead of retrying in the background.
@@ -55,6 +53,8 @@ def send_chat_message(
     product_context: str,
     history: str = "",
     system_prompt_override: Optional[str] = None,
+    temperature: float = 0.7,
+    max_tokens: int = 500,
 ) -> str:
     """
     Send a chat completion request to Groq and return the assistant's reply.
@@ -76,6 +76,8 @@ def send_chat_message(
         history: Formatted prior conversation turns (empty string if none).
         system_prompt_override: Optional final prompt that fully replaces
             `system_prompt` (e.g. build_rag_system_prompt() output).
+        temperature: Sampling temperature (the intent classifier uses 0).
+        max_tokens: Upper bound on the reply length in tokens.
 
     Returns:
         Clean string response from the LLM.
@@ -108,8 +110,8 @@ def send_chat_message(
         completion = client.chat.completions.create(
             model=settings.llm_model,
             messages=messages,  # type: ignore[arg-type]
-            temperature=0.7,
-            max_tokens=500,
+            temperature=temperature,
+            max_tokens=max_tokens,
             top_p=0.9,
         )
     except Exception as exc:

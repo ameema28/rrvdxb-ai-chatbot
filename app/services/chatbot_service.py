@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.ai.chatbot.intent import IntentResult, classify_intent
 from app.ai.chatbot.llm_client import send_chat_message
 from app.ai.chatbot.memory import (
+    DEFAULT_HISTORY_LIMIT,
     format_history_for_prompt,
     load_recent_history,
     save_turn,
@@ -65,11 +66,6 @@ _NO_FAQ_MATCH_NOTE = (
 
 # Day 7 — distinct user-facing message when the LLM exceeds the timeout budget.
 _TIMEOUT_REPLY = "I'm taking longer than usual. Please try again in a moment."
-
-# Day 7 — when persisted, a fallback turn uses this VALID intent so DB
-# constraints (intent must be one of the 5) hold. The ORIGINAL intent is still
-# sent back in ChatResponse for observability.
-_FALLBACK_PERSIST_INTENT = "general_chat"
 
 # Post-generation price guard: see app/ai/chatbot/price_guard.py for both
 # checks (grounding + per-product) and their documented limits. It runs
@@ -191,7 +187,7 @@ async def handle_chat_message(
     - 5b Validate every price figure in the reply against the injected
         context and against the named product's catalog price; replace the
         reply if either check fails.
-    - 6 Persist the turn (fallback turns persist as general_chat).
+    - 6 Persist the turn with the classified intent.
     - 7 Return ChatResponse (reply, recommended_products, deal, intent,
         confidence, response_time_ms, fallback_used).
     """
@@ -239,7 +235,10 @@ async def handle_chat_message(
     #    Blocking DB I/O runs in a worker thread so a slow database (e.g. a
     #    PostgreSQL host waking up) does not block the event loop.
     recent_turns = await asyncio.to_thread(
-        load_recent_history, db_session=db, user_id=effective_user_id, limit=5
+        load_recent_history,
+        db_session=db,
+        user_id=effective_user_id,
+        limit=DEFAULT_HISTORY_LIMIT,
     )
     history_string = format_history_for_prompt(recent_turns)
 
@@ -425,19 +424,17 @@ async def handle_chat_message(
     reply = guard.reply
 
     # ------------------------------------------------------------------
-    # 6. Persist the new turn.
-    #     Fallback turns (timeout / API error) are saved with the VALID
-    #     'general_chat' intent so chat_history constraints hold; the
-    #     ORIGINAL intent is still exposed in ChatResponse for observability.
+    # 6. Persist the new turn with the classified intent (also for fallback
+    #    replies: chat_history.intent has no constraint that needs a
+    #    substitute value).
     # ------------------------------------------------------------------
-    persist_intent = _FALLBACK_PERSIST_INTENT if llm_fallback else intent
     await asyncio.to_thread(
         save_turn,
         db_session=db,
         user_id=effective_user_id,
         message=message,
         ai_response=reply,
-        intent=persist_intent,
+        intent=intent,
     )
 
     # ------------------------------------------------------------------

@@ -34,7 +34,7 @@ def get_deals(user_id: str, message: str) -> Optional[Dict[str, Any]]:
     """
     lowered = message.lower()
     if any(kw in lowered for kw in _DEAL_KEYWORDS):
-        logger.info("deal_finder_stub: deal matched for user_id=%s", user_id)
+        logger.info("deal_finder_stub: deal matched")
         return {
             "title": "Summer Sale",
             "discount": "20% off",

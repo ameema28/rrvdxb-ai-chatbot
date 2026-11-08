@@ -17,10 +17,8 @@ PyJWT==2.15.1
 # AI / LLM (Day 1: direct API calls; hand-rolled orchestration, no LangChain)
 groq==1.6.0
 
-# Utilities
+# Utilities (python-dotenv: pydantic-settings reads .env through it)
 python-dotenv==1.0.0
-
-colorama>=0.4.6
 
 # Day 5 — RAG / Vector store (local embeddings, no OpenAI key)
 chromadb==0.5.5

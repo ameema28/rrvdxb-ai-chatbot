@@ -85,10 +85,6 @@ SHOWN_DEAL_NOTE = (
     "ask a follow-up question."
 )
 
-# Future utility: build_chat_messages(system_prompt, history, user_message)
-# Day 6 began this work: build_rag_system_prompt() below assembles the full
-# final system prompt for the RAG path.
-
 # --------------------------------------------------------------------------
 # INTENT CLASSIFICATION PROMPT — Day 4
 # --------------------------------------------------------------------------

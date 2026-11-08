@@ -733,7 +733,7 @@ def test_deal_inquiry_no_deal_falls_back_to_general():
     assert data["deal"] is None
 
 
-def test_llm_timeout_returns_timeout_message_and_saves_general_chat():
+def test_llm_timeout_returns_timeout_message_and_saves_the_real_intent():
     user_id = 14
     payload = {"message": "recommend me a laptop", "user_id": user_id}
 
@@ -756,8 +756,8 @@ def test_llm_timeout_returns_timeout_message_and_saves_general_chat():
     db = TestingSessionLocal()
     row = db.query(ChatHistory).filter(ChatHistory.user_id == str(user_id)).one()
     db.close()
-    # fallback turns are persisted with a VALID intent (general_chat)
-    assert row.intent == "general_chat"
+    # fallback turns keep the classified intent in chat_history too
+    assert row.intent == "recommend_product"
 
 
 def test_api_reports_real_low_confidence_for_offtopic_chat():

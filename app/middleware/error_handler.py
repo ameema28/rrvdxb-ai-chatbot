@@ -61,13 +61,6 @@ class AuthenticationError(AppError):
     status_code = status.HTTP_401_UNAUTHORIZED
 
 
-class ValidationError(AppError):
-    """400 — the caller sent something well-formed but invalid (e.g. 'abc' as an id)."""
-
-    error = "Validation error"
-    status_code = status.HTTP_400_BAD_REQUEST
-
-
 class RateLimitExceeded(AppError):
     """429 — the caller exceeded their per-minute budget."""
 
@@ -76,20 +69,6 @@ class RateLimitExceeded(AppError):
     # Every limit uses the same 60 s sliding window
     # (RATE_LIMIT_WINDOW_SECONDS in rate_limit.py; a test keeps them in sync).
     headers = {"Retry-After": "60"}
-
-
-class AIServiceError(AppError):
-    """
-    502 — the upstream AI provider failed in a non-recoverable way.
-
-    Day 8 note: defined so the service layer CAN raise it for hard upstream
-    failures. Today's chatbot_service deliberately degrades gracefully on LLM
-    errors/timeouts (HTTP 200 + canned reply per Day 7), so nothing raises
-    it yet — but the lever exists for the real integrations.
-    """
-
-    error = "AI service error"
-    status_code = status.HTTP_502_BAD_GATEWAY
 
 
 def _status_phrase(status_code: int) -> str:
@@ -111,8 +90,9 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     Single handler for every AppError subclass.
 
     FastAPI resolves exception handlers by walking the raised exception's MRO,
-    so registering this for `AppError` catches AuthenticationError,
-    ValidationError, RateLimitExceeded and AIServiceError in one place.
+    so registering this for `AppError` catches AuthenticationError and
+    RateLimitExceeded in one place. (Body validation errors are FastAPI's
+    RequestValidationError, handled by validation_error_handler.)
     """
     return JSONResponse(
         status_code=exc.status_code, content=exc.to_dict(), headers=exc.headers or None

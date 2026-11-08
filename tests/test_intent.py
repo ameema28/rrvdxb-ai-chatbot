@@ -27,6 +27,17 @@ _AMBIGUOUS = "I bought headphones last week and I have a concern about them"
 # Regex fast-path
 # --------------------------------------------------------------------------
 
+def test_llm_classifier_is_called_with_temperature_zero():
+    with patch(
+        "app.ai.chatbot.intent.send_chat_message",
+        return_value='{"intent": "product_faq", "confidence": 0.9, "entities": {}}',
+    ) as mock_llm:
+        result = classify_intent(_AMBIGUOUS)
+    assert result.intent == "product_faq"
+    assert mock_llm.call_args.kwargs["temperature"] == 0.0
+    assert mock_llm.call_args.kwargs["max_tokens"] == 150
+
+
 def test_regex_recommend_product_no_llm():
     result = classify_intent("recommend me a gift for my mom")
     assert isinstance(result, IntentResult)

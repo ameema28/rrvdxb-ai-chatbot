@@ -111,11 +111,11 @@ def test_general_chat_lists_what_sara_can_do():
         assert topic in data["reply"]
 
 
-def test_fallback_turn_is_saved_as_general_chat():
+def test_fallback_turn_is_saved_with_the_real_intent():
     _chat("recommend_product", "Can you recommend a perfume?", sub="fb-save")
     with TestingSessionLocal() as db:
         row = db.query(ChatHistory).filter(ChatHistory.user_id == "fb-save").one()
-    assert row.intent == "general_chat"
+    assert row.intent == "recommend_product"
 
 
 def test_price_guard_still_runs_on_the_fallback_text():

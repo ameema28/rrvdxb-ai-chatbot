@@ -36,6 +36,13 @@ def test_perfume_example_still_returns_both_perfumes():
     assert sorted(r["id"] for r in recs) == [4, 7]
 
 
+def test_missing_catalog_file_returns_no_products(monkeypatch, tmp_path):
+    from app.services import recommender_stub
+
+    monkeypatch.setattr(recommender_stub, "_PRODUCTS_FILE", tmp_path / "missing.json")
+    assert get_recommendations(1, "recommend me a phone") == []
+
+
 def test_bad_catalog_does_not_crash(monkeypatch):
     from app.services import recommender_stub
 

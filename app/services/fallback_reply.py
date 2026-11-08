@@ -17,12 +17,6 @@ TRACKING_FACTS: Sequence[str] = (
 
 SUPPORT_OFFER = "Would you like me to connect you with human support?"
 
-GENERIC_FALLBACK = (
-    "I'm here to help with your RRVDXB shopping experience. "
-    "I'm having a little trouble right now, but our team is on it. "
-    + SUPPORT_OFFER
-)
-
 NO_FAQ_MATCH = (
     "I couldn't find a matching answer in our FAQ for that question. "
     + SUPPORT_OFFER
@@ -57,8 +51,8 @@ def build_fallback_reply(
 
     has_content is True only when the reply carries content retrieved for
     this request (FAQ answer, products, deal, tracking guidance). It is False
-    for the static help text, the "nothing found" messages (which keep the
-    human-support offer) and the generic message.
+    for the static help text and the "nothing found" messages (which keep the
+    human-support offer).
     """
     if intent == "product_faq":
         if faq_chunks:
@@ -83,9 +77,7 @@ def build_fallback_reply(
             f"- {fact}" for fact in TRACKING_FACTS
         ), True
 
-    if intent == "general_chat":
-        # A static help text, not retrieved content: a timeout keeps its own
-        # short message instead of appending it.
-        return HELP_MESSAGE, False
-
-    return GENERIC_FALLBACK, False
+    # general_chat (the only remaining intent): a static help text, not
+    # retrieved content, so a timeout keeps its own short message instead of
+    # appending it.
+    return HELP_MESSAGE, False
