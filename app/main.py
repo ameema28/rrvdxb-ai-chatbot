@@ -22,6 +22,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.ai.chatbot.rag import vector_store
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.logging_setup import configure_logging
 from app.core.security import validate_security_settings
 from app.db.migrate import upgrade_to_head
 from app.demo_page import DEMO_PAGE_HEADERS, DEMO_PAGE_HTML
@@ -48,6 +49,7 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     returns, so a TCP startup probe waits for a warm app. A failed warm-up
     is logged and the app still starts; /health then reports "degraded".
     """
+    configure_logging(settings.log_level)
     if settings.db_auto_migrate:
         upgrade_to_head(settings.database_url)
     if settings.rag_warmup:

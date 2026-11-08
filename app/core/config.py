@@ -8,7 +8,7 @@ This is the single source of truth for all configuration in the app.
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 
 
 class Settings(BaseSettings):
@@ -90,6 +90,19 @@ class Settings(BaseSettings):
         default=True,
         description="Load the embedding model and FAQ index at startup (reported in /health)",
     )
+
+    log_level: str = Field(
+        default="INFO",
+        description="Root log level: DEBUG, INFO, WARNING, ERROR or CRITICAL",
+    )
+
+    @field_validator("log_level")
+    @classmethod
+    def _check_log_level(cls, value: str) -> str:
+        level = value.strip().upper()
+        if level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise ValueError("LOG_LEVEL must be DEBUG, INFO, WARNING, ERROR or CRITICAL")
+        return level
 
     # --- Performance / NFR (Day 7) ---
     # One total budget per chat request; each blocking step also has its own

@@ -109,6 +109,7 @@ Each secret is exposed to the service as an environment variable of the same nam
 | `TRUST_PROXY_HOPS` | `1` | The client IP is the right-most `X-Forwarded-For` entry, which Google's front end appends. Entries to its left are client-supplied and ignored. Use `2` if an external HTTPS load balancer sits in front of the service. |
 | `DB_AUTO_MIGRATE` | `true` | Image default. Safe only with maximum instances 1. |
 | `RAG_WARMUP` | `true` | Image default. |
+| `LOG_LEVEL` | optional, default `INFO` | Root log level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Logs contain no message text, tokens or keys. |
 | `RAG_SIMILARITY_THRESHOLD` | optional, default `0.45` | Minimum FAQ similarity for grounding (see 3.10). |
 | `CHAT_IP_RATE_PER_MINUTE` | optional, default `20` | Chat requests per client IP per minute (see 3.6). |
 | `RATE_LIMIT_PER_MINUTE` | optional, default `20` | Chat requests per token subject per minute. |
