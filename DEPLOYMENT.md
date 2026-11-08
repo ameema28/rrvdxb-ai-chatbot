@@ -142,7 +142,7 @@ Each secret is exposed to the service as an environment variable of the same nam
 | Chat, per client IP | 20 / minute | Client IP (proxy-aware) |
 | Demo tokens | 5 / minute | Client IP (proxy-aware) |
 
-`/`, `/health`, `/docs`, `/redoc` and `/openapi.json` are not rate limited.
+`/`, `/health`, `/docs`, `/redoc` and `/openapi.json` are not rate limited. A 429 response carries `Retry-After: 60` (the window length).
 
 **Shared Wi-Fi / events.** Everyone behind one public IP (an office, a university network, conference Wi-Fi, a mobile carrier's NAT) shares the per-IP chat cap: together they get 20 chats a minute, and 5 new demo tokens a minute. For a live demo to a group, raise the cap temporarily with an environment variable (this creates a new revision, which also resets the in-memory counters and, without `DATABASE_URL`, the SQLite history):
 
@@ -294,7 +294,7 @@ The reply system prompt therefore has a general **scope rule**: answer only abou
 
 ### 3.11 After changing code
 
-The image bakes in the code, the model and the index. After any code change, rebuild the image and push a new tag (for example `:v2`), then deploy that tag. With the current Dockerfile the model download step runs again whenever anything under `app/` changes (it took 1261 s in one local build).
+The image bakes in the code, the model and the index. After any code change, rebuild the image and push a new tag (for example `:v2`), then deploy that tag. The model is downloaded in a layer before the app code is copied, so a code-only change reuses the cached model layer (one such rebuild took 18 s locally). A change to `requirements.txt` or to the Dockerfile above that layer reruns the dependency install and the model download (the model step took 1261 s in one local build).
 
 ---
 
@@ -308,3 +308,9 @@ The image bakes in the code, the model and the index. After any code change, reb
 | `/health` shows `"status": "degraded"` | The embedding model or FAQ index failed to load; check the start-up log for `RAG warm-up failed`. |
 | Start-up fails with a database error | `DATABASE_URL` is wrong, or the Neon project is suspended or deleted. Remove the secret mapping to fall back to SQLite in `/tmp`. |
 | Many 429s for a group of people | They share one public IP: see "Shared Wi-Fi / events" in 3.6. |
+
+---
+
+## 5. Known limits
+
+- **Framework versions.** `fastapi==0.109.0` (Starlette 0.35.1) and `uvicorn==0.27.0` are older than releases that shipped security fixes for multipart form parsing and file responses. This app has no form or file endpoints, so those code paths appear unused. Not checked with a vulnerability scanner. Upgrade with a full test run before any further development.
