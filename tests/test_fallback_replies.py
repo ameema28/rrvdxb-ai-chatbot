@@ -61,15 +61,17 @@ def test_product_faq_without_a_match_says_so_and_offers_support():
     assert data["fallback_used"] is True
 
 
-def test_recommend_product_lists_products_with_catalog_prices():
+def test_recommend_product_reply_is_a_lead_in_and_products_are_structured():
     data = _chat("recommend_product", "Can you recommend a perfume?")
     assert data["fallback_used"] is True
-    assert "Chanel Coco Mademoiselle Body Spray" in data["reply"]
-    assert "AED 189.00" in data["reply"]
-    assert "Harak Perfume Oud Edition" in data["reply"]
-    assert "AED 450.00" in data["reply"]
+    assert data["reply"] == fallback_reply.PRODUCTS_LEAD_IN
+    # products and catalog prices are only in the structured field (no duplicate)
+    assert "Chanel" not in data["reply"] and "AED" not in data["reply"]
+    assert [p["name"] for p in data["recommended_products"]] == [
+        "Chanel Coco Mademoiselle Body Spray",
+        "Harak Perfume Oud Edition",
+    ]
     assert [p["price"] for p in data["recommended_products"]] == [189.0, 450.0]
-    assert data["reply"] != GUARD_REPLY
 
 
 def test_recommend_product_without_a_match_offers_support():
@@ -82,8 +84,9 @@ def test_recommend_product_without_a_match_offers_support():
 def test_deal_inquiry_uses_the_deal_text():
     data = _chat("deal_inquiry", "Are there any deals right now?")
     assert data["fallback_used"] is True
-    assert data["deal"] and "SUMMER20" in data["reply"]
-    assert "20% off" in data["reply"]
+    assert data["reply"] == fallback_reply.DEAL_LEAD_IN
+    assert "SUMMER20" in data["deal"] and "20% off" in data["deal"]
+    assert "SUMMER20" not in data["reply"]  # the deal is shown from the structured field
 
 
 def test_deal_inquiry_without_a_deal_offers_support():
@@ -134,5 +137,6 @@ def test_timeout_with_content_keeps_the_timeout_message_first(monkeypatch):
 
     data = _chat("deal_inquiry", "Any discount today?", sub="fb-slow", side_effect=slow)
     assert data["reply"].startswith("I'm taking longer than usual.")
-    assert "SUMMER20" in data["reply"]
+    assert data["reply"].endswith(fallback_reply.DEAL_LEAD_IN)
+    assert "SUMMER20" in data["deal"]
     assert data["fallback_used"] is True

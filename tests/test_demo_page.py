@@ -125,9 +125,9 @@ def test_each_example_button_returns_useful_content_without_the_llm():
     """Offline mode: the LLM fails, yet every button shows real content."""
     faq = [{"question": "Return policy", "answer": "Unused items can be returned within 14 days.", "similarity": 0.9}]
     expected_text = {
-        "Can you recommend a perfume?": "AED 189.00",
+        "Can you recommend a perfume?": "products from our catalog",
         "What is your return policy?": faq[0]["answer"],
-        "Are there any deals right now?": "SUMMER20",
+        "Are there any deals right now?": "current offer",
         "How do I track my order?": "My Orders",
     }
     assert set(expected_text) == set(EXAMPLES)
@@ -144,9 +144,9 @@ def test_each_example_button_returns_useful_content_without_the_llm():
         assert data["reply"] != GUARD_REPLY
         if intent == "recommend_product":
             assert data["recommended_products"], "the product button must return products"
-            assert all(p["price"] > 0 for p in data["recommended_products"])
+            assert [p["price"] for p in data["recommended_products"]] == [189.0, 450.0]
         if intent == "deal_inquiry":
-            assert data["deal"]
+            assert "SUMMER20" in data["deal"]
 
 
 def test_page_load_rejects_a_page_without_one_script(tmp_path):

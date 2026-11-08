@@ -28,7 +28,10 @@ NO_FAQ_MATCH = (
     + SUPPORT_OFFER
 )
 
-NO_DEAL = "I don't have a current offer to show right now. " + SUPPORT_OFFER
+PRODUCTS_LEAD_IN = "Here are some products from our catalog that match your request:"
+DEAL_LEAD_IN = "Here's our current offer:"
+
+NO_DEAL ="I don't have a current offer to show right now. " + SUPPORT_OFFER
 
 NO_RECOMMENDATION = (
     "I couldn't find a matching product in our catalog. Try naming a product "
@@ -64,17 +67,15 @@ def build_fallback_reply(
 
     if intent == "recommend_product":
         if recommendations:
-            lines = [
-                f"- {rec['name']} ({rec['brand']}): "
-                f"{rec.get('currency', 'AED')} {float(rec['price']):.2f}"
-                for rec in recommendations
-            ]
-            return "Here are some products from our catalog:\n" + "\n".join(lines), True
+            # The service always returns these as ChatResponse.recommended_products
+            # and the page renders them, so the text only introduces them.
+            return PRODUCTS_LEAD_IN, True
         return NO_RECOMMENDATION, False
 
     if intent == "deal_inquiry":
         if deal:
-            return f"Current offer: {deal}", True
+            # The deal is also returned as ChatResponse.deal; the page shows it.
+            return DEAL_LEAD_IN, True
         return NO_DEAL, False
 
     if intent == "track_order_help":
