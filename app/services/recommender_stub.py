@@ -77,13 +77,27 @@ def _keywords(message: str) -> list[str]:
     return words
 
 
+#: Shortest keyword allowed to match as a prefix/suffix of a product word.
+#: Shorter keywords must match a whole word ("son" must not match "Sony").
+MIN_AFFIX_LENGTH = 4
+
+
+def _word_matches(word: str, token: str) -> bool:
+    """True when `token` equals `word`, or is a long-enough prefix/suffix of it."""
+    if word == token:
+        return True
+    if len(token) < MIN_AFFIX_LENGTH:
+        return False
+    return word.startswith(token) or word.endswith(token)
+
+
 def get_recommendations(user_id: str, message: str) -> list[dict[str, Any]]:
     """Return up to three mock products matching the user's request.
 
     A message keyword counts when it equals a product's name/brand/category
-    word or appears as that word's prefix/suffix. This keeps "phone" ->
-    "iPhone" while rejecting substring traps like "phone" inside
-    "headphones".
+    word or, if it has at least MIN_AFFIX_LENGTH characters, appears as that
+    word's prefix/suffix. This keeps "phone" -> "iPhone" while rejecting
+    substring traps like "phone" inside "headphones" and "son" -> "Sony".
     """
     tokens = _keywords(message)
     if not tokens:
@@ -101,11 +115,7 @@ def get_recommendations(user_id: str, message: str) -> list[dict[str, Any]]:
         category = str(product.get("category", "")).lower()
         words = f"{name} {brand} {category}".split()
 
-        hits = [
-            token
-            for token in tokens
-            if any(w == token or w.endswith(token) or w.startswith(token) for w in words)
-        ]
+        hits = [token for token in tokens if any(_word_matches(w, token) for w in words)]
         if hits:
             scored.append((product_id, product, hits))
 

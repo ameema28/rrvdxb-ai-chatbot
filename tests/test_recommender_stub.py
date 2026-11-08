@@ -20,6 +20,22 @@ def test_every_recommendation_is_a_catalog_product():
         assert r["reason"].startswith("Matches your request for")
 
 
+def test_short_keyword_does_not_match_as_a_prefix():
+    # "son" is a prefix of "Sony": a gift for a son must not return Sony products.
+    assert get_recommendations(1, "gift for my son") == []
+
+
+def test_short_keyword_still_matches_a_whole_word():
+    # "ps5" (3 characters) equals a product word, so it still matches.
+    recs = get_recommendations(1, "recommend a ps5 controller")
+    assert [r["id"] for r in recs][:1] == [2]
+
+
+def test_perfume_example_still_returns_both_perfumes():
+    recs = get_recommendations(1, "Can you recommend a perfume?")
+    assert sorted(r["id"] for r in recs) == [4, 7]
+
+
 def test_bad_catalog_does_not_crash(monkeypatch):
     from app.services import recommender_stub
 
