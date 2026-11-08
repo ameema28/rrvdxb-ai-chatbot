@@ -31,7 +31,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.ai.chatbot.intent import IntentResult
-from app.middleware.rate_limit import RATE_LIMIT_LIMIT
+from app.middleware.rate_limit import RATE_LIMIT_LIMIT, RATE_LIMIT_WINDOW_SECONDS
 
 from app.models.chat_history import ChatHistory
 from tests.support import TestingSessionLocal, auth_headers
@@ -104,6 +104,7 @@ def test_rate_limit_exceeded_returns_429_standardized_body():
         "detail": "20 requests per minute allowed",
         "status_code": 429,
     }
+    assert blocked.headers.get("retry-after") == str(int(RATE_LIMIT_WINDOW_SECONDS))
     # A DIFFERENT user is not affected (per-user budgets are independent).
     with patch(
         "app.services.chatbot_service.send_chat_message",
@@ -303,6 +304,37 @@ def test_wrong_method_returns_canonical_405_body():
         "detail": "Method Not Allowed",
         "status_code": 405,
     }
+    # The handler keeps the exception's headers (RFC 9110 requires Allow on 405).
+    assert response.headers.get("allow") == "POST"
+
+
+def test_invalid_json_body_gets_a_readable_detail():
+    response = client.post(
+        "/api/v1/ai/chat",
+        content=b"{bad",
+        headers={**auth_headers("json-1"), "Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "Validation error",
+        "detail": "Request body is not valid JSON",
+        "status_code": 400,
+    }
+
+
+def test_whitespace_only_message_is_rejected_and_not_saved():
+    with patch("app.services.chatbot_service.send_chat_message") as mock_llm:
+        response = client.post(
+            "/api/v1/ai/chat", json={"message": "   \n "}, headers=auth_headers("blank-1")
+        )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid value for message: Value error, Message must not be blank"
+    mock_llm.assert_not_called()
+    db = TestingSessionLocal()
+    try:
+        assert db.query(ChatHistory).filter(ChatHistory.user_id == "blank-1").count() == 0
+    finally:
+        db.close()
 
 
 def test_malformed_request_body_returns_canonical_400():

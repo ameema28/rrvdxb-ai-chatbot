@@ -38,6 +38,8 @@ class AppError(Exception):
 
     error: str = "Error"
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
+    # Extra response headers for this error type (e.g. Retry-After on 429).
+    headers: Dict[str, str] = {}
 
     def __init__(self, detail: str) -> None:
         self.detail = detail
@@ -71,6 +73,9 @@ class RateLimitExceeded(AppError):
 
     error = "Rate limit exceeded"
     status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    # Every limit uses the same 60 s sliding window
+    # (RATE_LIMIT_WINDOW_SECONDS in rate_limit.py; a test keeps them in sync).
+    headers = {"Retry-After": "60"}
 
 
 class AIServiceError(AppError):
@@ -109,7 +114,9 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     so registering this for `AppError` catches AuthenticationError,
     ValidationError, RateLimitExceeded and AIServiceError in one place.
     """
-    return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+    return JSONResponse(
+        status_code=exc.status_code, content=exc.to_dict(), headers=exc.headers or None
+    )
 
 
 async def validation_error_handler(
@@ -122,7 +129,10 @@ async def validation_error_handler(
     no raw exception internals are ever echoed to the client.
     """
     errors = exc.errors()
-    if errors:
+    if errors and errors[0].get("type") == "json_invalid":
+        # loc is ("body", <character offset>), which reads badly as a field name.
+        detail = "Request body is not valid JSON"
+    elif errors:
         first = errors[0]
         loc = first.get("loc") or []
         msg = first.get("msg", "Invalid request")
@@ -144,9 +154,11 @@ async def http_exception_handler(
     """
     phrase = _status_phrase(exc.status_code)
     detail = exc.detail if isinstance(exc.detail, str) else phrase
+    # Keep the exception's headers, e.g. Allow on a 405.
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": phrase, "detail": detail, "status_code": exc.status_code},
+        headers=getattr(exc, "headers", None),
     )
 
 

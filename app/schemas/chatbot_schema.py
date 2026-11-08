@@ -7,7 +7,7 @@ validation, serialization, and OpenAPI documentation generation.
 
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChatRequest(BaseModel):
@@ -31,6 +31,14 @@ class ChatRequest(BaseModel):
         None,
         description="Ignored (kept for backward compatibility); the bearer token identifies the user",
     )
+
+    @field_validator("message")
+    @classmethod
+    def _message_not_blank(cls, value: str) -> str:
+        """Reject whitespace-only messages (the text itself is kept as sent)."""
+        if not value.strip():
+            raise ValueError("Message must not be blank")
+        return value
 
 
 class RecommendedProduct(BaseModel):

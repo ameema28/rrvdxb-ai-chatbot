@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     )
 
     # --- Runtime ---
-    debug: bool = Field(default=True, description="FastAPI debug mode")
+    debug: bool = Field(default=False, description="FastAPI debug mode")
     rag_similarity_threshold: float = Field(
         default=0.45,
         ge=0.0,
@@ -125,6 +125,7 @@ class Settings(BaseSettings):
     # --- Rate limiting (Day 10: config knob, was a code constant) ---
     rate_limit_per_minute: int = Field(
         default=20,
+        gt=0,
         description="Per-user chat request budget per minute (sliding window)",
     )
     chat_ip_rate_per_minute: int = Field(
