@@ -12,13 +12,18 @@ LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 _HANDLER_MARK = "_rrvdxb_handler"
 
+# Third-party loggers kept at WARNING: sqlalchemy.engine would log SQL
+# statements; httpx/httpcore log one line per Groq HTTP call; and
+# sentence_transformers logs model loading at INFO.
+QUIET_LOGGERS = ("sqlalchemy.engine", "httpx", "httpcore", "sentence_transformers")
+
 
 def configure_logging(level: str) -> None:
     """
     Attach one stream handler to the root logger and set its level.
 
-    Idempotent: a second call only updates the level. sqlalchemy.engine is
-    kept at WARNING so SQL statements are never logged at INFO.
+    Idempotent: a second call only updates the level. The QUIET_LOGGERS are
+    kept at WARNING whatever the root level is.
     """
     root = logging.getLogger()
     root.setLevel(level)
@@ -27,4 +32,5 @@ def configure_logging(level: str) -> None:
         handler.setFormatter(logging.Formatter(LOG_FORMAT))
         setattr(handler, _HANDLER_MARK, True)
         root.addHandler(handler)
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    for name in QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)

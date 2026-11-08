@@ -440,8 +440,10 @@ async def handle_chat_message(
     # ------------------------------------------------------------------
     # 7. Return structured response (intent exposed for observability)
     # ------------------------------------------------------------------
-    for name, dur in step_times:
-        logger.info("%s step took %.3fs", name, dur)
+    logger.info(
+        "Chat step times: %s",
+        " ".join(f"{name}={dur:.3f}s" for name, dur in step_times),
+    )
 
     # The real classifier confidence is reported as-is. Below the 0.7
     # threshold the intent layer has already switched the intent to

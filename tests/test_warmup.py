@@ -83,6 +83,33 @@ def test_empty_index_is_not_ready(fresh_state):
     assert vector_store.is_ready() is False
 
 
+def test_search_faqs_turns_off_the_progress_bar(monkeypatch):
+    """With INFO logging, sentence-transformers would print a tqdm bar per query."""
+    seen = []
+
+    class FakeModel:
+        def encode(self, texts, **kwargs):
+            seen.append(kwargs)
+
+            class Vectors:
+                def tolist(self):
+                    return [[0.0]]
+
+            return Vectors()
+
+    class FakeCollection:
+        def count(self):
+            return 1
+
+        def query(self, **kwargs):
+            return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+    monkeypatch.setattr(vector_store, "get_vector_store", lambda: FakeCollection())
+    monkeypatch.setattr(vector_store, "_get_embedding_model", lambda: FakeModel())
+    assert vector_store.search_faqs("return policy") == []
+    assert seen and seen[0]["show_progress_bar"] is False
+
+
 @pytest.mark.chroma
 def test_real_warm_up_makes_the_first_query_fast(tmp_path, monkeypatch):
     """After warm-up the first FAQ query fits well inside the 1.0 s retrieval cap."""

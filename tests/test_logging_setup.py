@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.core.logging_setup import LOG_FORMAT, _HANDLER_MARK, configure_logging
+from app.core.logging_setup import LOG_FORMAT, QUIET_LOGGERS, _HANDLER_MARK, configure_logging
 
 
 @pytest.fixture
@@ -18,7 +18,7 @@ def clean_root():
     root = logging.getLogger()
     saved_level = root.level
     saved_handlers = list(root.handlers)
-    saved_sql = logging.getLogger("sqlalchemy.engine").level
+    saved_quiet = {name: logging.getLogger(name).level for name in QUIET_LOGGERS}
     for h in saved_handlers:
         if getattr(h, _HANDLER_MARK, False):
             root.removeHandler(h)
@@ -27,7 +27,8 @@ def clean_root():
         if getattr(h, _HANDLER_MARK, False):
             root.removeHandler(h)
     root.setLevel(saved_level)
-    logging.getLogger("sqlalchemy.engine").setLevel(saved_sql)
+    for name, level in saved_quiet.items():
+        logging.getLogger(name).setLevel(level)
 
 
 def _ours(root):
@@ -69,6 +70,15 @@ def test_second_call_adds_no_second_handler(clean_root):
 def test_sql_engine_logger_stays_at_warning(clean_root):
     configure_logging("DEBUG")
     assert logging.getLogger("sqlalchemy.engine").level == logging.WARNING
+
+
+def test_third_party_info_loggers_stay_at_warning(clean_root):
+    configure_logging("INFO")
+    for name in ("httpx", "httpcore", "sentence_transformers"):
+        assert logging.getLogger(name).level == logging.WARNING
+    stream = _capture(clean_root)
+    logging.getLogger("httpx").info('HTTP Request: POST https://api.groq.com "HTTP/1.1 200 OK"')
+    assert stream.getvalue() == ""
 
 
 def test_log_level_setting_is_normalised_and_validated():

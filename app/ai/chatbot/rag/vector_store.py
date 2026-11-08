@@ -194,7 +194,9 @@ def build_vector_store() -> int:
 
     logger.info("Embedding %d chunk(s) with %s ...", len(chunk_text), _MODEL_NAME)
     # normalize_embeddings=True: unit vectors => cosine = dot product.
-    embeddings = model.encode(chunk_text, normalize_embeddings=True)
+    embeddings = model.encode(
+        chunk_text, normalize_embeddings=True, show_progress_bar=False
+    )
 
     collection = _get_collection()
 
@@ -271,7 +273,9 @@ def search_faqs(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
         return []
 
     model = _get_embedding_model()
-    q_emb = model.encode([query], normalize_embeddings=True)
+    # show_progress_bar=False: with INFO logging, sentence-transformers would
+    # otherwise print a tqdm bar to stderr on every query.
+    q_emb = model.encode([query], normalize_embeddings=True, show_progress_bar=False)
 
     res = collection.query(
         query_embeddings=q_emb.tolist(),

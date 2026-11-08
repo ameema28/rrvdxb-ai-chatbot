@@ -64,6 +64,10 @@ def test_user_message_is_not_logged_on_any_path(caplog, intent, extras):
     assert response.status_code == 200
     assert caplog.records, "expected the chat flow to log something"
     assert MARKER not in caplog.text
+    # One timing line per request, not one line per step.
+    timing = [r for r in caplog.records if r.getMessage().startswith("Chat step times:")]
+    assert len(timing) == 1
+    assert "step took" not in caplog.text
 
 
 @pytest.mark.parametrize(
