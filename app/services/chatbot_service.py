@@ -39,6 +39,7 @@ from app.ai.chatbot.rag.retriever import retrieve_faq_context
 from app.core.config import settings
 from app.schemas.chatbot_schema import ChatResponse, RecommendedProduct
 from app.services.deal_finder_stub import get_deals
+from app.services.fallback_reply import TRACKING_FACTS, build_fallback_reply
 from app.services.recommender_stub import get_recommendations
 
 logger = logging.getLogger(__name__)
@@ -151,9 +152,8 @@ def _build_system_prompt_for_intent(
         # model accurate process guidance and forbid inventing tracking info.
         tracking_note = (
             "\n\nORDER TRACKING GUIDANCE:\n"
-            "- RRVDXB emails/SMSes tracking details once an order ships.\n"
-            "- Customers can also check live status under 'My Orders'.\n"
-            "- NEVER invent a tracking number, carrier, or delivery date."
+            + "".join(f"- {fact}\n" for fact in TRACKING_FACTS)
+            + "- NEVER invent a tracking number, carrier, or delivery date."
         )
         return SYSTEM_PROMPT + tracking_note, product_context
 
@@ -254,6 +254,9 @@ async def handle_chat_message(
     system_prompt_override: Optional[str] = None
     recommended_products: List[RecommendedProduct] = []
     deal: Optional[str] = None
+    # Kept for the deterministic fallback reply (used only if the LLM fails).
+    faq_chunks: List[Dict[str, Any]] = []
+    recommendations: List[Dict[str, Any]] = []
 
     route_started = time.perf_counter()
     if intent == "product_faq":
@@ -367,17 +370,16 @@ async def handle_chat_message(
             max(reply_timeout, 0.0),
             intent,
         )
-        reply = _TIMEOUT_REPLY
         llm_fallback = True
+        fallback_text, has_content = build_fallback_reply(
+            intent, faq_chunks, recommendations, deal
+        )
+        reply = f"{_TIMEOUT_REPLY}\n\n{fallback_text}" if has_content else _TIMEOUT_REPLY
     except RuntimeError as exc:
         # The LLM client already logged the technical details.
         logger.warning("LLM call failed, returning fallback: %s", exc)
         llm_fallback = True
-        reply = (
-            "I'm here to help with your RRVDXB shopping experience. "
-            "I'm having a little trouble right now, but our team is on it. "
-            "Would you like me to connect you with human support?"
-        )
+        reply, _ = build_fallback_reply(intent, faq_chunks, recommendations, deal)
     step_times.append(("llm", time.perf_counter() - llm_started))
 
     # ------------------------------------------------------------------

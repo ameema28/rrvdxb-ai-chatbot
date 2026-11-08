@@ -103,7 +103,7 @@ def test_groq_error_text_with_key_characters_is_not_logged(caplog, monkeypatch):
         response = client.post(CHAT, json={"message": "hello"}, headers=auth_headers("priv-3"))
     monkeypatch.setattr(llm_client, "_groq_client", None)
     assert response.status_code == 200
-    assert "human support" in response.json()["reply"]
+    assert "RRVDXB shopping assistant" in response.json()["reply"]
     assert "FAKEKEYCHARS" not in caplog.text
     assert "Groq API call failed (Exception, status=None)" in caplog.text
 

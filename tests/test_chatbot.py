@@ -437,7 +437,9 @@ def test_chat_endpoint_falls_back_on_llm_error():
 
     assert response.status_code == 200
     data = response.json()
-    assert "human support" in data["reply"] or "trouble" in data["reply"].lower()
+    # general_chat fallback is the deterministic help message
+    assert "RRVDXB shopping assistant" in data["reply"]
+    assert data["fallback_used"] is True
     assert data["intent"] == "general_chat"
 
 
