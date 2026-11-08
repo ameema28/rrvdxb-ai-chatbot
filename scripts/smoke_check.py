@@ -33,7 +33,7 @@ PAGE_MARKER = '<meta name="rrvdxb-demo" content="chat">'
 TOKEN_PATH = "/api/v1/auth/demo-token"
 CHAT_PATH = "/api/v1/ai/chat"
 EXAMPLES = (
-    ("example: product", "Can you recommend a gift for my sister?", "recommend_product"),
+    ("example: product", "Can you recommend a perfume?", "recommend_product"),
     ("example: return policy", "What is your return policy?", "product_faq"),
     ("example: deals", "Are there any deals right now?", "deal_inquiry"),
     ("example: order tracking", "How do I track my order?", "track_order_help"),

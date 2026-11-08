@@ -26,7 +26,7 @@ CHAT = "/api/v1/ai/chat"
 DEMO = "/api/v1/auth/demo-token"
 
 EXAMPLES = {
-    "Can you recommend a gift for my sister?": "recommend_product",
+    "Can you recommend a perfume?": "recommend_product",
     "What is your return policy?": "product_faq",
     "Are there any deals right now?": "deal_inquiry",
     "How do I track my order?": "track_order_help",
@@ -119,6 +119,34 @@ def test_example_buttons_match_the_regex_fast_path():
             result = classify_intent(text)
             assert result.intent == expected
             assert result.confidence == 1.0
+
+
+def test_each_example_button_returns_useful_content_without_the_llm():
+    """Offline mode: the LLM fails, yet every button shows real content."""
+    faq = [{"question": "Return policy", "answer": "Unused items can be returned within 14 days.", "similarity": 0.9}]
+    expected_text = {
+        "Can you recommend a perfume?": "AED 189.00",
+        "What is your return policy?": faq[0]["answer"],
+        "Are there any deals right now?": "SUMMER20",
+        "How do I track my order?": "My Orders",
+    }
+    assert set(expected_text) == set(EXAMPLES)
+    for i, (text, intent) in enumerate(EXAMPLES.items()):
+        with patch(
+            "app.services.chatbot_service.send_chat_message", side_effect=RuntimeError("offline")
+        ), patch("app.ai.chatbot.intent.send_chat_message", side_effect=RuntimeError("offline")), patch(
+            "app.services.chatbot_service.retrieve_faq_context", return_value=faq
+        ):
+            data = client.post(CHAT, json={"message": text}, headers=auth_headers(f"btn-{i}")).json()
+        assert data["intent"] == intent, text
+        assert data["fallback_used"] is True
+        assert expected_text[text] in data["reply"], text
+        assert data["reply"] != GUARD_REPLY
+        if intent == "recommend_product":
+            assert data["recommended_products"], "the product button must return products"
+            assert all(p["price"] > 0 for p in data["recommended_products"])
+        if intent == "deal_inquiry":
+            assert data["deal"]
 
 
 def test_page_load_rejects_a_page_without_one_script(tmp_path):

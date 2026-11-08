@@ -29,7 +29,7 @@ TOKEN_PATH = "/api/v1/auth/demo-token"
 CHAT_PATH = "/api/v1/ai/chat"
 MIN_INTERVAL_S = 3.1
 QUESTIONS = (
-    "Can you recommend a gift for my sister?",
+    "Can you recommend a perfume?",
     "What is your return policy?",
     "Are there any deals right now?",
     "How do I track my order?",
