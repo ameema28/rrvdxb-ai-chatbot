@@ -236,8 +236,10 @@ async def handle_chat_message(
     # ------------------------------------------------------------------
     # 2. Load recent conversation history for this user (memory, Day 3)
     # ------------------------------------------------------------------
-    recent_turns = load_recent_history(
-        db_session=db, user_id=effective_user_id, limit=5
+    #    Blocking DB I/O runs in a worker thread so a slow database (e.g. a
+    #    PostgreSQL host waking up) does not block the event loop.
+    recent_turns = await asyncio.to_thread(
+        load_recent_history, db_session=db, user_id=effective_user_id, limit=5
     )
     history_string = format_history_for_prompt(recent_turns)
 
@@ -429,7 +431,8 @@ async def handle_chat_message(
     #     ORIGINAL intent is still exposed in ChatResponse for observability.
     # ------------------------------------------------------------------
     persist_intent = _FALLBACK_PERSIST_INTENT if llm_fallback else intent
-    save_turn(
+    await asyncio.to_thread(
+        save_turn,
         db_session=db,
         user_id=effective_user_id,
         message=message,

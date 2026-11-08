@@ -2,17 +2,23 @@
 Conversation-memory queries (SQLAlchemy 2.0 style), on SQLite and PostgreSQL.
 """
 
+import asyncio
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 
+from app.ai.chatbot import memory
+from app.ai.chatbot.intent import IntentResult
 from app.ai.chatbot.memory import (
     format_history_for_prompt,
     load_recent_history,
     save_turn,
 )
+from app.main import app
 from app.models.chat_history import ChatHistory
-from tests.support import IS_SQLITE, TestingSessionLocal
+from tests.support import IS_SQLITE, TestingSessionLocal, auth_headers
 
 pytestmark = pytest.mark.db
 
@@ -73,3 +79,36 @@ def test_user_id_is_stored_as_string_subject(db):
     sub = "demo-" + "f" * 32
     save_turn(db, sub, "hi", "hello")
     assert db.query(ChatHistory).filter(ChatHistory.user_id == sub).count() == 1
+
+
+def test_chat_runs_history_load_and_save_off_the_event_loop():
+    """Blocking DB calls run in a worker thread (no running event loop there)."""
+    on_loop = {}
+
+    def _record(name, func):
+        def wrapper(*args, **kwargs):
+            try:
+                asyncio.get_running_loop()
+                on_loop[name] = True
+            except RuntimeError:
+                on_loop[name] = False
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    with patch(
+        "app.services.chatbot_service.load_recent_history",
+        _record("load", memory.load_recent_history),
+    ), patch(
+        "app.services.chatbot_service.save_turn", _record("save", memory.save_turn)
+    ), patch(
+        "app.services.chatbot_service.send_chat_message", return_value="Hello!"
+    ), patch(
+        "app.services.chatbot_service.classify_intent",
+        return_value=IntentResult(intent="general_chat", confidence=1.0),
+    ):
+        response = TestClient(app).post(
+            "/api/v1/ai/chat", json={"message": "hi"}, headers=auth_headers("thread-user")
+        )
+    assert response.status_code == 200
+    assert on_loop == {"load": False, "save": False}
