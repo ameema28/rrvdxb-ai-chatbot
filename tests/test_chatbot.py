@@ -357,8 +357,8 @@ def test_hallucinated_price_in_reply_is_replaced():
     assert data["intent"] == "product_faq"
     assert "6,499" not in data["reply"]
     assert data["reply"] == (
-        "Let me double-check that exact figure for you — I don't want to quote "
-        "anything that isn't accurate. One moment, please."
+        "I can't confirm that price right now, so I won't quote it. Please ask "
+        "about a specific product from our catalog."
     )
 
     db = TestingSessionLocal()

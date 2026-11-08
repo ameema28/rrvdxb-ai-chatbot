@@ -53,8 +53,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 # The safe message sent when the guard trips. It quotes no figure itself.
 GUARD_REPLY = (
-    "Let me double-check that exact figure for you — I don't want to quote "
-    "anything that isn't accurate. One moment, please."
+    "I can't confirm that price right now, so I won't quote it. Please ask "
+    "about a specific product from our catalog."
 )
 
 _CURRENCY_ALIASES: Dict[str, str] = {

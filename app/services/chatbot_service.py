@@ -34,7 +34,12 @@ from app.ai.chatbot.memory import (
     save_turn,
 )
 from app.ai.chatbot.price_guard import build_catalog, validate_reply_prices
-from app.ai.chatbot.prompts import SYSTEM_PROMPT, build_rag_system_prompt
+from app.ai.chatbot.prompts import (
+    SHOWN_DEAL_NOTE,
+    SHOWN_PRODUCTS_NOTE,
+    SYSTEM_PROMPT,
+    build_rag_system_prompt,
+)
 from app.ai.chatbot.rag.retriever import retrieve_faq_context
 from app.core.config import settings
 from app.schemas.chatbot_schema import ChatResponse, RecommendedProduct
@@ -298,7 +303,10 @@ async def handle_chat_message(
             recommended_products = [RecommendedProduct(**rec) for rec in recommendations]
             context_block = _build_recommended_context(recommendations)
             system_prompt, context = (
-                SYSTEM_PROMPT + "\n\nRECOMMENDED PRODUCTS:\n" + context_block,
+                SYSTEM_PROMPT
+                + "\n\nRECOMMENDED PRODUCTS:\n"
+                + context_block
+                + SHOWN_PRODUCTS_NOTE,
                 "",
             )
             logger.info(
@@ -322,7 +330,10 @@ async def handle_chat_message(
                 f"{found_deal.get('discount', '')} (code: {found_deal.get('code', '')})"
             )
             system_prompt, context = (
-                SYSTEM_PROMPT + "\n\nACTIVE OFFER:\n" + _build_deal_context(found_deal),
+                SYSTEM_PROMPT
+                + "\n\nACTIVE OFFER:\n"
+                + _build_deal_context(found_deal)
+                + SHOWN_DEAL_NOTE,
                 "",
             )
             logger.info(

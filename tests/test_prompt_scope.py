@@ -12,7 +12,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.ai.chatbot.intent import IntentResult
-from app.ai.chatbot.prompts import INTENT_CLASSIFICATION_PROMPT, SCOPE_RULE, SYSTEM_PROMPT, build_rag_system_prompt
+from app.ai.chatbot.price_guard import GUARD_REPLY, extract_price_figures
+from app.ai.chatbot.prompts import (
+    INTENT_CLASSIFICATION_PROMPT,
+    SCOPE_RULE,
+    SHOWN_DEAL_NOTE,
+    SHOWN_PRODUCTS_NOTE,
+    SYSTEM_PROMPT,
+    build_rag_system_prompt,
+)
 from app.main import app
 from tests.support import auth_headers
 
@@ -72,3 +80,22 @@ def test_scope_rule_reaches_the_llm_on_every_path(intent, stubs):
     kwargs = llm.call_args.kwargs
     effective_prompt = kwargs["system_prompt_override"] or kwargs["system_prompt"]
     assert SCOPE_RULE in effective_prompt
+    # Products and the deal are shown by the page as structured fields: the
+    # model is told not to repeat them, and only on the paths that return them.
+    assert (SHOWN_PRODUCTS_NOTE in effective_prompt) == (stubs.get("get_recommendations") == _REC)
+    assert (SHOWN_DEAL_NOTE in effective_prompt) == (stubs.get("get_deals") == _DEAL)
+
+
+def test_reply_format_is_plain_text_without_follow_up_promises():
+    assert "plain text only" in SYSTEM_PROMPT
+    assert "no Markdown" in SYSTEM_PROMPT
+    assert "Use bullet points" not in SYSTEM_PROMPT
+    # No promise of a later check that the demo can never deliver.
+    assert "Let me check that for you" not in SYSTEM_PROMPT
+    assert "One moment" not in GUARD_REPLY
+    assert extract_price_figures(GUARD_REPLY) == set()
+
+
+def test_prompt_does_not_ask_for_currency_conversion():
+    assert "AED for UAE/Saudi" not in SYSTEM_PROMPT
+    assert "Never convert them to another currency" in SYSTEM_PROMPT
