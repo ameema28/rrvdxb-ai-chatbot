@@ -91,19 +91,75 @@ def test_page_renews_the_token_on_401_and_reports_404_and_429():
     assert "Too many requests" in script
 
 
-def test_details_show_only_api_fields():
+def test_details_show_only_api_fields_with_friendly_labels():
     script = _script(_page())
-    labels = re.findall(r'\["(\w+)", data\.(\w+)\]', script)
+    labels = re.findall(r'\["([^"]+)", \w+\(data\.(\w+)\)\]', script)
     assert labels == [
-        ("intent", "intent"),
-        ("confidence", "confidence"),
-        ("response_time_ms", "response_time_ms"),
-        ("fallback_used", "fallback_used"),
+        ("Intent", "intent"),
+        ("Confidence", "confidence"),
+        ("Response time", "response_time_ms"),
+        ("Fallback used", "fallback_used"),
     ]
     from app.schemas.chatbot_schema import ChatResponse
 
     for _, field in labels:
         assert field in ChatResponse.model_fields
+    # Values are explained, not raw booleans or field names.
+    for text in (
+        "yes (fixed text, no live model)",
+        "no (live model)",
+        " ms (server time)",
+        "low, answered as general chat",
+        "Product recommendation",
+    ):
+        assert text in script
+    assert '"fallback_used"' not in script and '"response_time_ms"' not in script
+
+
+def test_bubbles_follow_text_direction_and_errors_are_shown_once():
+    script = _script(_page())
+    assert 'node.dir = "auto"' in script
+    # The error text goes into the bubble only; the status line just points to it.
+    assert "statusLine.textContent = text" not in script
+
+
+def _function_body(script: str, name: str) -> str:
+    start = script.index(f"function {name}(")
+    return script[start:script.index("\n  }\n", start)]
+
+
+def test_newest_reply_is_scrolled_into_view():
+    html = _page()
+    script, style = _script(html), _style(html)
+    show = _function_body(script, "showNewest")
+    # A reply taller than the log shows its start; otherwise scroll to the bottom.
+    assert "node.offsetHeight > log.clientHeight ? node.offsetTop : log.scrollHeight" in show
+    # offsetTop is measured inside the log only if the log is positioned.
+    assert "position: relative" in style.split("#log {")[1].split("}")[0]
+    # Every reply and every error bubble becomes the newest and is scrolled to.
+    reply = _function_body(script, "addReply")
+    assert reply.rstrip().endswith("newestReply = node;\n    showNewest(node);")
+    assert 'newestReply = addMessage("bot error", text);\n      showNewest(newestReply);' in script
+    # The keyboard (viewport resize) and the details toggle keep it in view.
+    assert 'window.addEventListener("resize", keepNewestVisible)' in script
+    assert 'window.visualViewport.addEventListener("resize", keepNewestVisible)' in script
+    toggle = script.split('toggle.addEventListener("click"')[1].split("});")[0]
+    assert "showNewest(newestReply)" in toggle
+
+
+def test_header_and_privacy_note_are_compact_on_small_screens():
+    style = _style(_page())
+    compact = style.split("@media (max-width: 600px), (max-height: 640px)")[1].split("}\n}")[0]
+    assert "header p { display: none; }" in compact
+    assert "header h1 { font-size: 0.95rem; }" in compact
+    assert "footer { font-size: 0.68rem" in compact
+
+
+def test_examples_scroll_in_one_row_on_narrow_screens():
+    style = _style(_page())
+    narrow = style.split("@media (max-width: 600px)")[1].split("}\n}")[0]
+    assert "flex-wrap: nowrap" in narrow
+    assert "overflow-x: auto" in narrow
 
 
 def test_example_buttons_match_the_regex_fast_path():

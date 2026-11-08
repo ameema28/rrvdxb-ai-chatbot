@@ -70,6 +70,7 @@ header p { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
 }
 .toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 #log {
+  position: relative;
   flex: 1;
   overflow-y: auto;
   padding: 16px 0;
@@ -130,6 +131,22 @@ header p { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
+}
+/* Phones: one horizontally scrolling row of examples, so the chat log keeps
+   its height when the keyboard is open. */
+@media (max-width: 600px) {
+  .examples { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .examples::-webkit-scrollbar { display: none; }
+  .examples button { flex: none; white-space: nowrap; }
+}
+/* Narrow or short screens: a compact header and privacy note leave more
+   height for the chat log. */
+@media (max-width: 600px), (max-height: 640px) {
+  header { padding: 8px 0 6px; }
+  header h1 { font-size: 0.95rem; }
+  header p { display: none; }
+  .toggle { padding: 4px 10px; font-size: 0.8rem; }
+  footer { font-size: 0.68rem; padding-bottom: 4px; }
 }
 form {
   display: flex;
@@ -211,17 +228,66 @@ footer { color: var(--muted); font-size: 0.75rem; padding-bottom: 8px; }
     return node;
   }
 
+  var newestReply = null;
+
   function scrollDown() { log.scrollTop = log.scrollHeight; }
+
+  // Keep the newest reply in view. If it is taller than the log, show its
+  // start (not its end); otherwise scroll to the bottom. #log is
+  // position: relative, so offsetTop is measured inside the log.
+  function showNewest(node) {
+    if (!node) { return; }
+    log.scrollTop = node.offsetHeight > log.clientHeight ? node.offsetTop : log.scrollHeight;
+  }
+
+  // The on-screen keyboard shrinks the log after a reply; scroll again then.
+  function keepNewestVisible() { showNewest(newestReply); }
+  window.addEventListener("resize", keepNewestVisible);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", keepNewestVisible);
+  }
 
   function addMessage(kind, text) {
     var node = el("div", "msg " + kind, text);
+    // Urdu or Arabic text gets right-to-left layout; English stays left-to-right.
+    node.dir = "auto";
     log.appendChild(node);
     scrollDown();
     return node;
   }
 
-  function shown(value) {
-    return value === null || value === undefined ? "not returned" : String(value);
+  var NOT_RETURNED = "not returned";
+  var INTENT_LABELS = {
+    recommend_product: "Product recommendation",
+    track_order_help: "Order tracking",
+    deal_inquiry: "Deals and offers",
+    product_faq: "FAQ or policy question",
+    general_chat: "General chat"
+  };
+
+  function missing(value) { return value === null || value === undefined; }
+
+  function intentText(value) {
+    if (missing(value)) { return NOT_RETURNED; }
+    return INTENT_LABELS[value] ? INTENT_LABELS[value] + " (" + value + ")" : String(value);
+  }
+
+  // Below 0.7 the server has already answered as general chat; 0 means the
+  // classifier was unavailable or gave no usable label.
+  function confidenceText(value) {
+    if (missing(value)) { return NOT_RETURNED; }
+    var percent = Math.round(value * 100) + "%";
+    if (value === 0) { return percent + " (no classification, answered as general chat)"; }
+    return value < 0.7 ? percent + " (low, answered as general chat)" : percent;
+  }
+
+  function timeText(value) {
+    return missing(value) ? NOT_RETURNED : value + " ms (server time)";
+  }
+
+  function fallbackText(value) {
+    if (missing(value)) { return NOT_RETURNED; }
+    return value ? "yes (fixed text, no live model)" : "no (live model)";
   }
 
   function addReply(data) {
@@ -238,16 +304,17 @@ footer { color: var(--muted); font-size: 0.75rem; padding-bottom: 8px; }
     }
     var details = el("dl", "details");
     [
-      ["intent", data.intent],
-      ["confidence", data.confidence],
-      ["response_time_ms", data.response_time_ms],
-      ["fallback_used", data.fallback_used]
+      ["Intent", intentText(data.intent)],
+      ["Confidence", confidenceText(data.confidence)],
+      ["Response time", timeText(data.response_time_ms)],
+      ["Fallback used", fallbackText(data.fallback_used)]
     ].forEach(function (pair) {
       details.appendChild(el("dt", "", pair[0]));
-      details.appendChild(el("dd", "", shown(pair[1])));
+      details.appendChild(el("dd", "", pair[1]));
     });
     node.appendChild(details);
-    scrollDown();
+    newestReply = node;
+    showNewest(node);
   }
 
   function showTyping() {
@@ -322,8 +389,9 @@ footer { color: var(--muted); font-size: 0.75rem; padding-bottom: 8px; }
     } catch (err) {
       typing.remove();
       var text = err instanceof DemoError ? err.message : "Network error. Please check your connection and try again.";
-      addMessage("bot error", text);
-      statusLine.textContent = text;
+      newestReply = addMessage("bot error", text);
+      showNewest(newestReply);
+      statusLine.textContent = "The last message failed (see above).";
     } finally {
       setBusy(false);
       input.focus();
@@ -346,6 +414,8 @@ footer { color: var(--muted); font-size: 0.75rem; padding-bottom: 8px; }
     app.classList.toggle("show-details", on);
     toggle.setAttribute("aria-pressed", on ? "true" : "false");
     toggle.textContent = on ? "Hide details" : "Show details";
+    // Details change the reply's height; keep the newest reply in view.
+    showNewest(newestReply);
   });
 
   addMessage("bot", "Hi, I'm Sara. Ask me about products, shipping, returns, deals or order tracking.");
