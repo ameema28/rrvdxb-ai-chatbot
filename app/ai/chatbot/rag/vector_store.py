@@ -56,7 +56,7 @@ def load_faqs() -> List[Dict[str, Any]]:
     """
     Read app/mock_data/faqs.json and return a normalized list of FAQ entries.
 
-    Tolerances (production-grade, never raise on file problems):
+    Tolerances (defensive: never raise on file problems):
       - file missing                         -> log + return []
       - malformed JSON / not a list          -> log + return []
       - entry without 'question'/'answer'    -> skipped

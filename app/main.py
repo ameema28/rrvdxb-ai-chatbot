@@ -93,7 +93,10 @@ def create_application() -> FastAPI:
 
     application = FastAPI(
         title=settings.app_name,
-        description="AI-powered shopping assistant for RRVDXB premium e-commerce.",
+        description=(
+            "Shopping assistant API for RRVDXB: JWT auth, hybrid intent routing, "
+            "ChromaDB FAQ retrieval, Groq LLM replies, price guard, request time budget."
+        ),
         version="0.1.0",
         debug=settings.debug,
         docs_url="/docs",
